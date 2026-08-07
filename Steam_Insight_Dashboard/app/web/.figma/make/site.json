@@ -1,0 +1,10 @@
+{
+  "description": "Discover global gaming trends and influencer insights with a dark-themed dashboard, showcasing top games, player metrics, and personalized recommendations.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

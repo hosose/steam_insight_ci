@@ -1,0 +1,9 @@
+{
+  "name": "sinsa-web-html",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx -y serve -p 3000 .",
+    "build": "echo \"Static HTML app - no build required\""
+  }
+}
