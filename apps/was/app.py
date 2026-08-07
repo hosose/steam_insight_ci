@@ -99,6 +99,24 @@ def init_db_tables(connection):
             )
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS genres (
+                name VARCHAR(100) PRIMARY KEY
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS game_genres (
+                appid BIGINT NOT NULL,
+                genre_name VARCHAR(100) NOT NULL,
+                PRIMARY KEY (appid, genre_name),
+                FOREIGN KEY (appid) REFERENCES game_info(appid) ON DELETE CASCADE,
+                FOREIGN KEY (genre_name) REFERENCES genres(name) ON DELETE CASCADE
+            )
+            """
+        )
 
 app = FastAPI(title="Steam Insight EKS WAS", version="3.0.0-auto")
 
@@ -340,7 +358,9 @@ def fetch_top_played_games() -> list[dict]:
 
 
 def fetch_app_details(appid: int) -> dict | None:
-    url = f"{STORE_URL}?appids={appid}"
+    # l=koreana: Steam 스토어 API의 한국어 로케일 코드("korean"이 아님).
+    # 이름/장르/요약 중 공식 한국어 번역이 있는 항목은 한국어로, 없는 항목은 자동으로 영어(원문)로 내려옴.
+    url = f"{STORE_URL}?appids={appid}&l=koreana"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=10) as response:
@@ -399,6 +419,19 @@ def save_game_info(connection, appid: int, details: dict) -> None:
         )
 
 
+def save_game_genres(connection, appid: int, details: dict) -> None:
+    genre_names = [g.get("description", "").strip() for g in details.get("genres") or [] if g.get("description")]
+    if not genre_names:
+        return
+    with connection.cursor() as cursor:
+        for genre_name in genre_names:
+            cursor.execute("INSERT IGNORE INTO genres (name) VALUES (%s)", (genre_name,))
+            cursor.execute(
+                "INSERT IGNORE INTO game_genres (appid, genre_name) VALUES (%s, %s)",
+                (appid, genre_name),
+            )
+
+
 def collect_game_charts() -> None:
     if not os.getenv("DB_HOST"):
         return
@@ -424,6 +457,7 @@ def collect_game_charts() -> None:
                     details = fetch_app_details(appid)
                     if details:
                         save_game_info(connection, appid, details)
+                        save_game_genres(connection, appid, details)
                         new_appid_count += 1
                     time.sleep(1)  # store API 요청 과다 방지
                 except Exception as ed:
@@ -593,7 +627,7 @@ def get_user_friends(username: str) -> dict:
 
 
 @app.get("/api/trends")
-def get_trend_games(limit: int = 4) -> dict:
+def get_trend_games(tab: str = "overview", genre: str | None = None, limit: int = 4) -> dict:
     try:
         with closing(db_connection()) as connection:
             with connection.cursor() as cursor:
@@ -601,7 +635,7 @@ def get_trend_games(limit: int = 4) -> dict:
                 latest_ts = (cursor.fetchone() or {}).get("latest")
 
                 if not latest_ts:
-                    return {"status": "ok", "trends": []}
+                    return {"status": "ok", "tab": tab, "trends": []}
 
                 cursor.execute(
                     "SELECT MAX(collected_at) AS previous FROM game_chart_rankings WHERE collected_at < %s",
@@ -611,14 +645,14 @@ def get_trend_games(limit: int = 4) -> dict:
 
                 cursor.execute(
                     """
-                    SELECT r.appid, r.ranking, r.concurrent_in_game, g.name, g.genres, g.discount_percent
+                    SELECT r.appid, r.ranking, r.concurrent_in_game,
+                           g.name, g.header_image, g.genres, g.discount_percent
                     FROM game_chart_rankings r
                     LEFT JOIN game_info g ON g.appid = r.appid
                     WHERE r.collected_at = %s
                     ORDER BY r.ranking ASC
-                    LIMIT %s
                     """,
-                    (latest_ts, limit),
+                    (latest_ts,),
                 )
                 latest_rows = cursor.fetchall()
 
@@ -629,6 +663,16 @@ def get_trend_games(limit: int = 4) -> dict:
                         (previous_ts,),
                     )
                     previous_map = {row["appid"]: row["concurrent_in_game"] for row in cursor.fetchall()}
+
+                genre_appids = None
+                if tab == "category":
+                    if not genre:
+                        return {"status": "ok", "tab": tab, "trends": []}
+                    cursor.execute(
+                        "SELECT appid FROM game_genres WHERE genre_name = %s",
+                        (genre,),
+                    )
+                    genre_appids = {row["appid"] for row in cursor.fetchall()}
 
         trends = []
         for row in latest_rows:
@@ -644,15 +688,44 @@ def get_trend_games(limit: int = 4) -> dict:
                 "appid": row["appid"],
                 "name": row.get("name") or f"App {row['appid']}",
                 "genre": genre_label,
+                "header_image": row.get("header_image") or "",
                 "active": f"{current:,}",
+                "active_raw": current,
                 "change": f"{change_pct:+.1f}%" if change_pct is not None else "—",
+                "change_pct": change_pct,
                 "isUp": change_pct is None or change_pct >= 0,
                 "discount": f"-{discount_percent}%" if discount_percent > 0 else "—",
+                "discount_percent": discount_percent,
             })
 
-        return {"status": "ok", "trends": trends}
+        if tab == "discount":
+            trends = [t for t in trends if t["discount_percent"] > 0]
+            trends.sort(key=lambda t: t["discount_percent"], reverse=True)
+        elif tab == "rising":
+            trends = [t for t in trends if t["change_pct"] is not None]
+            trends.sort(key=lambda t: t["change_pct"], reverse=True)
+        elif tab == "popular":
+            trends.sort(key=lambda t: t["active_raw"], reverse=True)
+        elif tab == "category":
+            trends = [t for t in trends if t["appid"] in genre_appids]
+            trends.sort(key=lambda t: t["active_raw"], reverse=True)
+        # overview: game_chart_rankings.ranking 순서 그대로 유지
+
+        return {"status": "ok", "tab": tab, "trends": trends[:limit]}
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Trend data fetch failed: {exc}") from exc
+
+
+@app.get("/api/genres")
+def get_genres() -> dict:
+    try:
+        with closing(db_connection()) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT name FROM genres ORDER BY name ASC")
+                genres = [row["name"] for row in cursor.fetchall()]
+        return {"status": "ok", "genres": genres}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Genres fetch failed: {exc}") from exc
 
 
 @app.get("/api/db")
