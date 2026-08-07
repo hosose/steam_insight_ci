@@ -858,7 +858,7 @@
             <div class="profile-info">
               <p class="tag-label">PUBLIC PROFILE · LIVE QUERY</p>
               <h2 id="profileUsername">Gaben</h2>
-              <p>Korea, Republic of · Level 47 · 공개 프로필</p>
+              <p id="profileSubText">Steam ID 조회 대기 중 · 공개 프로필</p>
             </div>
             <span class="badge-updated" id="badgeUpdated">조회 갱신 완료</span>
           </div>
@@ -1157,6 +1157,22 @@
         if (!res.ok) throw new Error(`WAS API Error (HTTP ${res.status})`);
         const data = await res.json();
 
+        if (data.personaname || data.username) {
+          document.getElementById('profileUsername').textContent = data.personaname || data.username;
+        }
+        const profileSubText = document.getElementById('profileSubText');
+        const isRealSteam = data.data_source === 'STEAM_API' || data.data_source === 'REAL_STEAM_PUBLIC';
+        if (profileSubText) {
+          const dbText = data.db_saved ? 'MySQL DB 저장됨' : 'DB 저장 안 됨';
+          const srcText = isRealSteam ? '실제 Steam 연동' : '가상 데이터';
+          profileSubText.textContent = `Steam ID: ${data.steam_id || '-'} · ${srcText} · ${dbText}`;
+        }
+        if (data.avatar_url && data.avatar_url.startsWith('http')) {
+          const avatarEl = document.getElementById('profileAvatar');
+          if (avatarEl) {
+            avatarEl.innerHTML = `<img src="${data.avatar_url}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;" />`;
+          }
+        }
         if (data.metrics) {
           document.getElementById('metricGames').textContent = data.metrics.games;
           document.getElementById('metricHours').textContent = data.metrics.hours;
@@ -1168,7 +1184,11 @@
         if (data.was_pod) {
           navStatusText.textContent = `WAS POD: ${data.was_pod} · LIVE`;
           const badgeEl = document.getElementById('badgeUpdated');
-          if (badgeEl) badgeEl.textContent = `WAS 갱신 완료 (${data.was_pod})`;
+          if (badgeEl) {
+            const srcBadge = isRealSteam ? ' [실제 스팀 데이터]' : ' [가상 데이터]';
+            const dbBadge = data.db_saved ? ' [DB 저장 완료]' : '';
+            badgeEl.textContent = `WAS 갱신 완료 (${data.was_pod})${srcBadge}${dbBadge}`;
+          }
         }
       } catch (err) {
         console.warn('WAS API connection failed, using fallback:', err);
