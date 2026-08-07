@@ -4,11 +4,11 @@ chcp 65001 >nul
 
 for %%I in ("%~dp0..\..\..") do set "PROJECT_ROOT=%%~fI"
 set "INFRA_DIR=%PROJECT_ROOT%\infra"
-if not defined APP_NAMESPACE set "APP_NAMESPACE=de-ai-07"
+if not defined APP_NAMESPACE set "APP_NAMESPACE=steam-insight"
 if not defined PYTHON_CMD set "PYTHON_CMD=python"
 
-set "SECRET_JSON_FILE=%TEMP%\de-ai-07-rds-secret-%RANDOM%.json"
-set "DB_ENV_FILE=%TEMP%\de-ai-07-rds-env-%RANDOM%.txt"
+set "SECRET_JSON_FILE=%TEMP%\steam-insight-rds-secret-%RANDOM%.json"
+set "DB_ENV_FILE=%TEMP%\steam-insight-rds-env-%RANDOM%.txt"
 
 call :terraform_output AWS_REGION aws_region || goto :error
 call :terraform_output CLUSTER_NAME cluster_name || goto :error

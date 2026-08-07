@@ -1,5 +1,5 @@
 aws_region   = "us-east-2"
-project_name = "de-ai-07-eks-auto"
+project_name = "steam-insight"
 environment  = "dev"
 
 kubernetes_version = "1.35"
@@ -18,7 +18,7 @@ db_allocated_storage = 20
 # ------------------------------------------------------------
 enable_github_actions_ci = true
 github_owner             = "hosose"           # 본 프로젝트의 깃허브의 소유주 명
-github_ci_repository     = "devops_tf_k8s_ci" # 본 프로젝트 저장소 이름
+github_ci_repository     = "steam_insight_ci" # 본 프로젝트 저장소 이름
 github_ci_branch         = "main"             # 어떤 브런치에서만 ECR push를 위한 인증 허가할것인가
 
 # 아래 오류 나면 false로 설정 (이미 있음)

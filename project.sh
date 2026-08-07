@@ -14,7 +14,7 @@ usage() {
   infra                   Terraform 인프라만 생성하고 kubeconfig 연결
   image                   WEB/WAS 이미지를 빌드하여 ECR Push
   secret                  RDS 정보를 Kubernetes Secret으로 동기화
-  k8s                     tf-k8s-cd Manifest를 수동 적용
+  k8s                     steam_insight_cd Manifest를 수동 적용
 
 운영
   status                  EKS 및 애플리케이션 상태 확인

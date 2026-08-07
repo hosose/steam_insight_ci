@@ -3,7 +3,7 @@
   ```
     # 소스 변경 => push => GitHub Actions => 이미지 생성 => 임시인증(OIDC) => ECR 업데이트 : devops관련
     # 최초 1회 인프라 구성(테라폼) => 변경시 반영됨
-    devops_tf_k8s_ci -> GitHub Actions -> AWS ECR 
+    steam_insight_ci -> GitHub Actions -> AWS ECR 
   ```
 - 지금까지 구성한 인프라(aws 기반 테라폼구성)와 플랫폼/서비스(쿠버네티스) 위에 Devops 올려서 형태 최종 완성
 
@@ -28,11 +28,11 @@
             ├─ WAS 이미지 ECR Push
             └─ ECR 이미지 등록 확인
 ```
-- devops_tf_k8s_ci 는 CI/CD 구성에서 `CI 영역만 담당하는 소스 저장소(source repository)` 임
+- steam_insight_ci 는 CI/CD 구성에서 `CI 영역만 담당하는 소스 저장소(source repository)` 임
 
 # 프로젝트 구조
 ```text
-        devops-tf-k8s-ci/
+        steam_insight_ci/
         ├─ setup-ci.bat             # 신규 1회 수행 : Windows CI 전체 최초 설정
         ├─ setup-ci.sh              # 신규 1회 수행 : macOS/Linux/WSL CI 전체 최초 설정
         ├─ validate-ci.bat          # 신규 수시 수행 : Windows 로컬 CI 재검증 
@@ -64,9 +64,9 @@
 
 - 전체 저장소 배치
   ```
-    devops_tf_k8s/
-    L devops_tf_k8s_ci
-    L devops_tf_k8s_cd
+    Steam_Insight/
+    L steam_insight_ci
+    L steam_insight_cd
   ```
 
 
@@ -139,8 +139,8 @@
 
 - ci 셋업 1회 진행
 ```
-./setup-ci.bat ucoccto/devops_tf_k8s_ci 
-./setup-ci.sh ucoccto/devops_tf_k8s_ci
+./setup-ci.bat hosose/steam_insight_ci 
+./setup-ci.sh hosose/steam_insight_ci
 ```
 
 
@@ -155,7 +155,7 @@
 * **원인:** AWS상에 이미 동일한 이름의 ECR 리포지토리(`was`) 및 IAM OIDC Provider가 생성되어 있으나, 테라폼 상태 파일(`tfstate`)에 관리 대상으로 등록되지 않아 생성 시도 중 충돌 발생.
 * **해결 방법:** `terraform import` 명령어를 사용하여 기존 AWS 리소스를 테라폼 관리 상태로 가져와 동기화 수행.
 ```bash
-terraform import aws_ecr_repository.was de-ai-07-eks-auto-dev/was
+terraform import aws_ecr_repository.was steam-insight-dev/was
 terraform import 'aws_iam_openid_connect_provider.github_actions[0]' arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com
 
 ```
@@ -170,7 +170,7 @@ terraform import 'aws_iam_openid_connect_provider.github_actions[0]' arn:aws:iam
 * **원인:** Windows 배치 스크립트 내 GitOps(CD) 레포지토리 경로 탐색 구문에서 상위 디렉토리 이동(`..\`) 누락 및 폴더명 불일치로 잘못된 중복 경로(`...\devops_tf_k8s_ci\devops_tf_k8s_cd\...`) 참조.
 * **해결 방법:** 배치 스크립트 내 `GITOPS_REPO_DIR` 설정 구문에 `..\`를 추가하고 실제 폴더명(`devops_tf_k8s_cd`)에 맞게 경로 수정.
 ```cmd
-for %%I in ("%SOURCE_REPO_ROOT%\..\devops_tf_k8s_cd") do set "GITOPS_REPO_DIR=%%~fI"
+for %%I in ("%SOURCE_REPO_ROOT%\..\steam_insight_cd") do set "GITOPS_REPO_DIR=%%~fI"
 
 ```
 
@@ -190,7 +190,7 @@ for %%I in ("%SOURCE_REPO_ROOT%\..\devops_tf_k8s_cd") do set "GITOPS_REPO_DIR=%%
 
 * **발생 에러:** 브라우저 접속 시 `ERR_TIMED_OUT` (응답 시간 초과)
 * **원인:** Ingress를 통해 생성된 AWS ALB의 보안 그룹(Security Group) 인바운드 규칙에 HTTP(80) 포트 접근 권한이 누락되었거나, ALB 연결 설정 문제로 외부 트래픽이 차단됨.
-* **해결 방법:** kubectl delete ingress public-alb -n de-ai-07 이 명령어 치고 다시 deploy 실행
+* **해결 방법:** kubectl delete ingress public-alb -n steam-insight 이 명령어 치고 다시 deploy 실행
 
 ---
 

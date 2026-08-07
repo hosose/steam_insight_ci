@@ -5,11 +5,11 @@ set -Eeuo pipefail
 # 향후 이 kubectl apply 역할은 Argo CD가 대신한다.
 SOURCE_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 INFRA_DIR="${SOURCE_REPO_ROOT}/infra"
-DEFAULT_GITOPS_REPO_DIR="$(cd "${SOURCE_REPO_ROOT}/.." && pwd)/tf-k8s-cd"
+DEFAULT_GITOPS_REPO_DIR="$(cd "${SOURCE_REPO_ROOT}/.." && pwd)/steam_insight_cd"
 GITOPS_REPO_DIR="${GITOPS_REPO_DIR:-${DEFAULT_GITOPS_REPO_DIR}}"
-GITOPS_MANIFEST_TEMPLATE="${GITOPS_MANIFEST_TEMPLATE:-${GITOPS_REPO_DIR}/apps/de-ai-07/legacy/app.yaml.tpl}"
+GITOPS_MANIFEST_TEMPLATE="${GITOPS_MANIFEST_TEMPLATE:-${GITOPS_REPO_DIR}/apps/steam-insight/legacy/app.yaml.tpl}"
 RENDERER="${SOURCE_REPO_ROOT}/tools/render_manifest.py"
-APP_NAMESPACE="${APP_NAMESPACE:-de-ai-07}"
+APP_NAMESPACE="${APP_NAMESPACE:-steam-insight}"
 IMAGE_TAG="${IMAGE_TAG:-k8s-auto}"
 
 required_commands=(terraform aws kubectl python3)

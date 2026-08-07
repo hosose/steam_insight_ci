@@ -5,7 +5,7 @@ from contextlib import closing
 import pymysql
 from fastapi import FastAPI, HTTPException
 
-app = FastAPI(title="DE-AI-07 EKS Auto Mode WAS", version="3.0.0-auto")
+app = FastAPI(title="Steam Insight EKS WAS", version="3.0.0-auto")
 
 
 def required_env(name: str) -> str:

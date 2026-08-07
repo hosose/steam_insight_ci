@@ -4,7 +4,7 @@ chcp 65001 >nul
 
 rem ============================================================
 rem Windows Kubernetes manual deployment helper.
-rem Uses tf-k8s-cd\k8s\overlays\dev Kustomize structure.
+rem Uses steam_insight_cd\k8s\overlays\dev Kustomize structure.
 rem If CHANGE_ME placeholders remain, a temporary copy is patched
 rem with Terraform ECR outputs. The CD repository is not modified.
 rem ============================================================
@@ -13,13 +13,13 @@ for %%I in ("%~dp0..\..\..") do set "SOURCE_REPO_ROOT=%%~fI"
 set "INFRA_DIR=%SOURCE_REPO_ROOT%\infra"
 
 if not defined GITOPS_REPO_DIR (
-  for %%I in ("%SOURCE_REPO_ROOT%\..\devops_tf_k8s_cd") do set "GITOPS_REPO_DIR=%%~fI"
+  for %%I in ("%SOURCE_REPO_ROOT%\..\steam_insight_cd") do set "GITOPS_REPO_DIR=%%~fI"
 )
 
 set "K8S_SOURCE_DIR=%GITOPS_REPO_DIR%\k8s"
 set "SOURCE_KUSTOMIZATION=%K8S_SOURCE_DIR%\overlays\dev\kustomization.yaml"
 
-if not defined APP_NAMESPACE set "APP_NAMESPACE=de-ai-07"
+if not defined APP_NAMESPACE set "APP_NAMESPACE=steam-insight"
 if not defined IMAGE_TAG set "IMAGE_TAG=k8s-auto"
 
 call :require_command terraform
@@ -136,8 +136,8 @@ echo [ERROR] Kustomize file not found.
 echo         %SOURCE_KUSTOMIZATION%
 echo.
 echo Expected repositories:
-echo   parent\tf-k8s-ci
-echo   parent\tf-k8s-cd
+echo   parent\steam_insight_ci
+echo   parent\steam_insight_cd
 call :cleanup
 exit /b 1
 

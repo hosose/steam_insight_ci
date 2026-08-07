@@ -5,7 +5,7 @@ set -Eeuo pipefail
 # 비밀번호는 Git 또는 Manifest 파일에 기록하지 않는다.
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 INFRA_DIR="${PROJECT_ROOT}/infra"
-APP_NAMESPACE="${APP_NAMESPACE:-de-ai-07}"
+APP_NAMESPACE="${APP_NAMESPACE:-steam-insight}"
 
 required_commands=(terraform aws kubectl python3)
 for command_name in "${required_commands[@]}"; do

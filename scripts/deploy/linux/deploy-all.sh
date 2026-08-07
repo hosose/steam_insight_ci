@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 # 호환용 통합 실행기: Source Repository의 1~3단계와 GitOps Manifest를 사용하는 4단계를 순서대로 호출한다.
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-export APP_NAMESPACE="${APP_NAMESPACE:-de-ai-07}"
+export APP_NAMESPACE="${APP_NAMESPACE:-steam-insight}"
 export IMAGE_TAG="${IMAGE_TAG:-k8s-auto}"
 
 "${PROJECT_ROOT}/scripts/deploy/linux/01-infra-apply.sh"

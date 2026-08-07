@@ -3,7 +3,7 @@ setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul
 
 for %%I in ("%~dp0..\..\..") do set "PROJECT_ROOT=%%~fI"
-if not defined APP_NAMESPACE set "APP_NAMESPACE=de-ai-07"
+if not defined APP_NAMESPACE set "APP_NAMESPACE=steam-insight"
 if not defined IMAGE_TAG set "IMAGE_TAG=k8s-auto"
 if not defined PYTHON_CMD set "PYTHON_CMD=python"
 

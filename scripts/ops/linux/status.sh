@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 INFRA_DIR="${PROJECT_ROOT}/infra"
-APP_NAMESPACE="${APP_NAMESPACE:-de-ai-07}"
+APP_NAMESPACE="${APP_NAMESPACE:-steam-insight}"
 
 AWS_REGION="$(terraform -chdir="${INFRA_DIR}" output -raw aws_region)"
 CLUSTER_NAME="$(terraform -chdir="${INFRA_DIR}" output -raw cluster_name)"

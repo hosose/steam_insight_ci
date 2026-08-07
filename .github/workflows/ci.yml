@@ -30,7 +30,7 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout tf-k8s-ci
+      - name: Checkout steam_insight_ci
         uses: actions/checkout@v7
 
       - name: Set up Terraform
@@ -60,7 +60,7 @@ jobs:
         app: [web, was]
 
     steps:
-      - name: Checkout tf-k8s-ci
+      - name: Checkout steam_insight_ci
         uses: actions/checkout@v7
 
       - name: Check required GitHub variables
@@ -82,7 +82,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          role-session-name: tf-k8s-ci-${{ github.run_id }}-${{ matrix.app }}
+          role-session-name: steam-insight-ci-${{ github.run_id }}-${{ matrix.app }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -170,7 +170,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
   
   update-cd:
-    name: Update tf-k8s-cd image tags
+    name: Update steam_insight_cd image tags
     needs: build-and-push
 
     if: github.event_name != 'pull_request'
@@ -211,16 +211,16 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          role-session-name: tf-k8s-ci-${{ github.run_id }}-update-cd
+          role-session-name: steam-insight-ci-${{ github.run_id }}-update-cd
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Checkout tf-k8s-cd
+      - name: Checkout steam_insight_cd
         uses: actions/checkout@v7
         with:
           repository: ${{ vars.CD_REPOSITORY }}
           token: ${{ secrets.CD_REPOSITORY_TOKEN }}
           ref: main
-          path: tf-k8s-cd
+          path: steam_insight_cd
 
       - name: Install Kustomize
         env:
@@ -251,7 +251,7 @@ jobs:
           WEB_IMAGE="${ECR_REGISTRY}/${ECR_WEB_REPOSITORY}"
           WAS_IMAGE="${ECR_REGISTRY}/${ECR_WAS_REPOSITORY}"
 
-          cd tf-k8s-cd/k8s/overlays/dev
+          cd steam_insight_cd/k8s/overlays/dev
 
           kustomize edit set image \
             "WEB_IMAGE=${WEB_IMAGE}:${IMAGE_TAG}" \
@@ -261,7 +261,7 @@ jobs:
           test -s /tmp/de-ai-25.yaml
 
       - name: Commit and push CD change
-        working-directory: tf-k8s-cd
+        working-directory: steam_insight_cd
         run: |
           set -euo pipefail
 
