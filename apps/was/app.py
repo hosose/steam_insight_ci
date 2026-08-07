@@ -413,6 +413,9 @@ def _mock_user_response(username: str) -> dict:
     return {
         "status": "ok",
         "username": username,
+        "steam_id": None,
+        "avatar_url": "",
+        "data_source": "MOCK",
         "was_pod": socket.gethostname(),
         "metrics": {
             "games": f"{games_count}",
@@ -467,6 +470,9 @@ async def analyze_user(username: str, request: Request) -> dict:
     return {
         "status": "ok",
         "username": display_name,
+        "steam_id": steamid,
+        "avatar_url": summary.get("avatarfull", ""),
+        "data_source": "STEAM_API",
         "was_pod": socket.gethostname(),
         "metrics": {
             "games": f"{len(games)}",

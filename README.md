@@ -121,7 +121,7 @@
         `Au... github` 버튼 클릭 > 설정완료
 
       # ID 조회
-      gh api repos/ucoccto/devops_tf_k8s_ci --jq "{owner_id: .owner.id, repository_id: .id, created_at: .created_at}"
+      gh api repos/hosose/steam_insight_ci --jq "{owner_id: .owner.id, repository_id: .id, created_at: .created_at}"
       ---
       {
         "created_at": "2026-08-05T23:51:38Z",
@@ -139,7 +139,7 @@
 
 - ci 셋업 1회 진행
 ```
-./setup-ci.bat hosose/steam_insight_ci 
+./setup-ci.bat hosose/steam_insight_ci
 ./setup-ci.sh hosose/steam_insight_ci
 ```
 

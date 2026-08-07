@@ -62,9 +62,12 @@ data "aws_iam_policy_document" "github_actions_ci_assume" {
     }
     # 조건 : 다른 저장소, 다른 브런치 Role 사용 x
     condition {
-      test     = "StringEquals"
+      test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = [local.github_actions_ci_subject]
+      values = [
+        "repo:${var.github_owner}/${var.github_ci_repository}:*",
+        "repo:${var.github_owner}@${var.github_owner_id}/${var.github_ci_repository}@${var.github_ci_repository_id}:*"
+      ]
     }
   }
 }
