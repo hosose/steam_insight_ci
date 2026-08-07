@@ -62,6 +62,11 @@ def init_db_tables(connection):
 app = FastAPI(title="Steam Insight EKS WAS", version="3.0.0-auto")
 
 
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.on_event("startup")
 def startup_db_init():
     if os.getenv("DB_HOST"):
