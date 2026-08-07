@@ -208,7 +208,7 @@ jobs:
           done
 
       - name: Configure temporary AWS credentials with OIDC
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           role-session-name: steam-insight-ci-${{ github.run_id }}-update-cd
