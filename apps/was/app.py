@@ -7,7 +7,9 @@ import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+# pyrefly: ignore [missing-import]
 import aiomysql
+# pyrefly: ignore [missing-import]
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 
@@ -71,7 +73,22 @@ STEAM_ID64_BASE = 76561197960265728  # SteamID64 = 이 값 + AccountID32(게임 
 STEAM_ACCOUNT_ID_MAX = 2**32
 
 BEDROCK_DEFAULT_REGION = "us-east-1"
-BEDROCK_DEFAULT_MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0"
+BEDROCK_DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+# Steam GetPlayerSummaries의 personastate 코드 → 표시용 상태 문자열
+PERSONA_STATE_LABELS = {
+    0: "offline",
+    1: "online",
+    2: "busy",
+    3: "away",
+    4: "snooze",
+    5: "looking_to_trade",
+    6: "looking_to_play",
+}
+
+
+def persona_state_label(summary: dict) -> str:
+    return PERSONA_STATE_LABELS.get(summary.get("personastate", 0), "offline")
 
 
 def required_env(name: str) -> str:
@@ -226,37 +243,32 @@ async def fetch_friend_list(client: httpx.AsyncClient, api_key: str, steamid: st
         return []
 
 
-async def estimate_achievement_rate(
-    client: httpx.AsyncClient, api_key: str, steamid: str, top_games: list[dict]
-) -> int | None:
-    """가장 많이 플레이한 게임 상위 5개의 업적 달성률 평균으로 전체 달성률을 근사한다.
+async def fetch_game_achievements(
+    client: httpx.AsyncClient, api_key: str, steamid: str, appid: int | None
+) -> dict | None:
+    """특정 게임의 업적 달성 개수(achieved/total)를 가져온다.
 
-    Steam Web API는 계정 전체를 아우르는 단일 업적 달성률을 제공하지 않는다.
-    업적이 없거나 비공개인 게임은 평균 계산에서 제외한다.
+    업적이 없는 게임이거나, 업적 통계가 비공개인 계정이면 None을 반환한다.
+    (Steam Web API는 계정 전체를 아우르는 단일 업적 지표를 제공하지 않으므로,
+    표시 중인 게임별로만 개수를 조회한다.)
     """
-
-    async def game_ratio(appid: int) -> float | None:
-        try:
-            response = await client.get(
-                f"{STEAM_API_BASE}/ISteamUserStats/GetPlayerAchievements/v1/",
-                params={"key": api_key, "steamid": steamid, "appid": appid},
-            )
-            data = response.json().get("playerstats", {})
-        except (httpx.HTTPError, ValueError):
-            return None
-        if not data.get("success"):
-            return None
-        achievements = data.get("achievements", [])
-        if not achievements:
-            return None
-        achieved = sum(1 for item in achievements if item.get("achieved"))
-        return achieved / len(achievements)
-
-    ratios = await asyncio.gather(*(game_ratio(g["appid"]) for g in top_games[:5]))
-    valid_ratios = [r for r in ratios if r is not None]
-    if not valid_ratios:
+    if not appid:
         return None
-    return round(sum(valid_ratios) / len(valid_ratios) * 100)
+    try:
+        response = await client.get(
+            f"{STEAM_API_BASE}/ISteamUserStats/GetPlayerAchievements/v1/",
+            params={"key": api_key, "steamid": steamid, "appid": appid},
+        )
+        data = response.json().get("playerstats", {})
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not data.get("success"):
+        return None
+    achievements = data.get("achievements", [])
+    if not achievements:
+        return None
+    achieved = sum(1 for item in achievements if item.get("achieved"))
+    return {"achieved": achieved, "total": len(achievements)}
 
 
 def minutes_to_hours_label(minutes: float) -> str:
@@ -404,10 +416,13 @@ async def info() -> dict[str, str]:
     }
 
 
+MOCK_REGIONS = ["KR", "US", "JP", "DE", "BR", "GB", "CA"]
+
+
 def _mock_user_response(username: str) -> dict:
     games_count = random.randint(150, 500)
     play_hours = random.randint(1000, 5000)
-    achievement_rate = random.randint(50, 98)
+    achievement_count = random.randint(5, 80)
     friends_count = random.randint(40, 300)
 
     return {
@@ -415,13 +430,16 @@ def _mock_user_response(username: str) -> dict:
         "username": username,
         "steam_id": None,
         "avatar_url": "",
+        "profile_url": None,
+        "persona_state": random.choice(["online", "offline"]),
         "data_source": "MOCK",
         "was_pod": socket.gethostname(),
         "metrics": {
             "games": f"{games_count}",
             "hours": f"{play_hours:,}h",
-            "achievements": f"{achievement_rate}%",
+            "achievements": f"{achievement_count}개",
             "friends": f"{friends_count}명",
+            "region": random.choice(MOCK_REGIONS),
         },
         "playstyle": random.choice(PLAYSTYLES),
         "insight": random.choice(INSIGHTS),
@@ -448,19 +466,26 @@ async def analyze_user(username: str, request: Request) -> dict:
         raise HTTPException(status_code=502, detail=f"Steam API 조회 실패: {exc}") from exc
 
     display_name = summary.get("personaname", username)
-    # 프론트엔드 "보유 게임" 카드에는 넉넉히 12개까지 보여주고, Bedrock 프롬프트에는
-    # 그중 상위 5개만 사용한다 (games_summary가 너무 길어지지 않도록).
-    display_games = build_game_entries(games, limit=12)
-    top_games_for_prompt = display_games[:5]
+    # 프로필 카드에는 가장 많이 플레이한 5개 게임만 보여준다 (플레이 시간 + 게임별 업적).
+    display_games = build_game_entries(games, limit=5)
     total_minutes = sum(g.get("playtime_forever", 0) for g in games)
 
     friends_task = fetch_friend_list(client, steam_api_key, steamid)
-    achievement_task = estimate_achievement_rate(client, steam_api_key, steamid, display_games)
-    insight_task = generate_user_insight(client, display_name, top_games_for_prompt)
-
-    friends, achievement_rate, insight_result = await asyncio.gather(
-        friends_task, achievement_task, insight_task
+    achievements_task = asyncio.gather(
+        *(fetch_game_achievements(client, steam_api_key, steamid, g["appid"]) for g in display_games)
     )
+    insight_task = generate_user_insight(client, display_name, display_games)
+
+    friends, per_game_achievements, insight_result = await asyncio.gather(
+        friends_task, achievements_task, insight_task
+    )
+
+    for game, achievements in zip(display_games, per_game_achievements):
+        game["achievements"] = achievements
+
+    # 계정 전체 업적 달성률을 제공하는 API가 없어, 화면에 보여주는 상위 5개 게임의
+    # 달성 개수를 그대로 합산해 표시한다 (근사치가 아니라 실제 개수).
+    achievement_total = sum(a["achieved"] for a in per_game_achievements if a is not None)
 
     # 실 데이터 경로에서는 플레이스타일/인사이트를 Bedrock 생성 결과로만 채운다.
     # BEDROCK_API_KEY 미설정이나 호출 실패 시 random 하드코딩 값으로 대체하지 않고
@@ -472,13 +497,16 @@ async def analyze_user(username: str, request: Request) -> dict:
         "username": display_name,
         "steam_id": steamid,
         "avatar_url": summary.get("avatarfull", ""),
+        "profile_url": summary.get("profileurl"),
+        "persona_state": persona_state_label(summary),
         "data_source": "STEAM_API",
         "was_pod": socket.gethostname(),
         "metrics": {
             "games": f"{len(games)}",
             "hours": minutes_to_hours_label(total_minutes),
-            "achievements": f"{achievement_rate}%" if achievement_rate is not None else "0%",
+            "achievements": f"{achievement_total}개",
             "friends": f"{len(friends)}명",
+            "region": summary.get("loccountrycode") or "-",
         },
         "playstyle": playstyle,
         "insight": insight,
@@ -493,6 +521,8 @@ def _mock_friends_response(username: str) -> dict:
         friend["twoWeeks"] = f"{random.randint(10, 60)}.{random.randint(0, 9)}h"
         friend["total"] = f"{random.randint(1000, 8000):,}h"
         friend["shared"] = f"{random.randint(5, 30)}개"
+        friend["profile_url"] = None
+        friend["persona_state"] = random.choice(["online", "offline"])
 
     return {
         "status": "ok",
@@ -524,6 +554,8 @@ async def build_real_friend_entry(
         "name": display_name,
         "code": display_name[:2].upper(),
         "country": summary.get("loccountrycode", "—"),
+        "profile_url": summary.get("profileurl"),
+        "persona_state": persona_state_label(summary),
         "game": top_games[0]["name"] if top_games else "—",
         "twoWeeks": f"{two_weeks_minutes / 60:.1f}h",
         "total": minutes_to_hours_label(total_minutes),

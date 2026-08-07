@@ -35,10 +35,11 @@
 
 ### 2.3 Bedrock 모델 ID
 
-- 기본값으로 시도했던 `anthropic.claude-3-5-haiku-20241022-v1:0`, `anthropic.claude-3-5-sonnet-20241022-v2:0`, `amazon.titan-text-express-v1`은 현재 Bedrock에서 **"reached the end of its life"(404)** 로 더 이상 호출되지 않는다.
-- `anthropic.claude-3-sonnet-20240229-v1:0`은 "Legacy 모델이며 최근 30일간 사용 이력이 없어 접근 거부"로 실패했다 (계정별 모델 사용 이력에 따라 달라질 수 있음).
-- **`anthropic.claude-3-haiku-20240307-v1:0`은 정상 호출 확인됨** — `apps/was/app.py`의 `BEDROCK_DEFAULT_MODEL_ID` 기본값을 이걸로 변경했다. 리전은 `us-east-1` 기본값 그대로 정상 동작한다.
-- 모델 가용성은 AWS 쪽에서 수시로 바뀔 수 있으므로, 나중에 다시 404/EOL 에러가 나면 `BEDROCK_MODEL_ID` 환경 변수로 다른 모델을 지정해 우회할 수 있다 (코드 수정 불필요).
+- 기본값으로 시도했던 `anthropic.claude-3-5-haiku-20241022-v1:0`, `anthropic.claude-3-5-sonnet-20241022-v2:0`, `anthropic.claude-3-7-sonnet-20250219-v1:0`, `amazon.titan-text-express-v1`은 현재 Bedrock에서 **"reached the end of its life"(404)** 로 더 이상 호출되지 않는다.
+- `anthropic.claude-3-sonnet-20240229-v1:0`, 이후에는 `anthropic.claude-3-haiku-20240307-v1:0`까지도 시간이 지나며 "Legacy 모델이며 최근 30일간 사용 이력이 없어 접근 거부"로 막혔다 — **한 번 정상 호출되던 모델도 계정의 사용 이력에 따라 나중에 다시 막힐 수 있다는 뜻**이라 이 값에 의존하지 않는 편이 좋다.
+- `anthropic.claude-sonnet-4-20250514-v1:0`처럼 최신 모델은 리전 접두어 없는 raw 모델 ID로는 호출이 안 되고 `Retry your request with the ID or ARN of an inference profile`로 거부된다 — **`us.` 접두어가 붙은 크로스 리전 추론 프로필 ID**(`us.anthropic.<model>`)로 호출해야 한다.
+- **현재(2026-08-07 기준) 정상 동작 확인된 값: `us.anthropic.claude-haiku-4-5-20251001-v1:0`** — `apps/was/app.py`의 `BEDROCK_DEFAULT_MODEL_ID` 기본값을 이걸로 변경했다. 리전은 `us-east-1` 기본값 그대로 동작한다.
+- 모델 가용성은 AWS 쪽에서 수시로(심지어 같은 세션 안에서도) 바뀔 수 있으므로, 나중에 다시 404/EOL/Legacy 에러가 나면 `BEDROCK_MODEL_ID` 환경 변수로 다른 모델(또는 다른 추론 프로필)을 지정해 우회할 수 있다 (코드 수정 불필요). 증상이 나타나면 이 문서의 curl 예시로 모델 ID 후보를 직접 순회 테스트해보는 것이 가장 빠르다.
 
 ### 2.4 실제 검증 결과
 

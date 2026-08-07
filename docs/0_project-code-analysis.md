@@ -114,7 +114,7 @@ python3 -m py_compile "${ROOT_DIR}/apps/was/app.py"
 - **Steam Web API 연동** (`STEAM_API_KEY` 설정 시):
   - `ResolveVanityURL`로 SteamID64/커스텀 URL/프로필 URL 입력을 모두 SteamID64로 정규화
   - `GetPlayerSummaries`(프로필), `GetOwnedGames`(보유 게임·누적 플레이 시간), `GetFriendList`(친구 목록), `GetRecentlyPlayedGames`(최근 2주 플레이)를 조합해 실제 지표 계산
-  - 업적 달성률은 Steam이 계정 전체 단일 지표를 제공하지 않으므로, 최다 플레이 게임 상위 5개의 `GetPlayerAchievements` 결과를 평균해 근사치를 계산 (비공개/업적 없는 게임은 평균에서 제외, 전부 실패 시 `"N/A"`)
+  - 업적은 Steam이 계정 전체 단일 지표를 제공하지 않으므로, 프로필 카드에 보여주는 최다 플레이 게임 상위 5개 각각에 대해 `GetPlayerAchievements`로 달성 개수(achieved/total)를 가져와 게임 카드에 표시하고, 그 개수를 합산해 상단 지표에 `"N개"`로 표시한다 (퍼센트가 아닌 실제 개수 — 비공개/업적 없는 게임은 집계에서 제외, 전부 실패 시 `"0개"`)
   - 친구 목록이 비공개면 `GetFriendList`가 403을 반환하는데, 이 경우 빈 목록으로 처리(에러로 취급하지 않음)
   - 존재하지 않는 프로필은 `404`, Steam API 자체 장애(타임아웃/5xx)는 `502`로 구분해 응답 — 목업 버전과 달리 **실 데이터 연동 이후에는 잘못된 유저명에 대해 정상적으로 실패할 수 있다** (프론트엔드의 fetch 실패 시 로컬 폴백 로직이 이 케이스를 흡수한다)
 - **AWS Bedrock 연동** (`BEDROCK_API_KEY` 설정 시, IAM SigV4가 아닌 **Bedrock API 키 Bearer 토큰 인증** 방식 사용):
@@ -162,7 +162,7 @@ PR에서는 Push까지 가지 않고 `validate`만 실행되도록 `if: github.e
 
 - ~~`/api/user`, `/api/friends`가 실제 Steam Web API를 호출하지 않고 전부 `random` 목업이다~~ → 4.4절에서 해결: `STEAM_API_KEY`/`BEDROCK_API_KEY` 설정 시 실 데이터·실 인사이트로 동작하며, 키가 없을 때만 목업으로 폴백한다.
 - **입력 검증 부재**: `username` 경로 파라미터에 별도 검증이 없다. Steam Web API가 자체적으로 잘못된 값에 404/에러를 반환하므로 치명적이진 않지만, 과도하게 긴 입력값 등에 대한 명시적 길이 제한은 여전히 없다.
-- **업적 달성률은 근사치**: 계정 전체의 단일 업적 달성률 API가 Steam에 없어 상위 5개 게임 평균으로 근사한다 (4.4절). 정확한 지표가 필요하면 프론트엔드 문구를 "근사치" 임을 명시하는 것을 고려.
+- **업적 개수는 화면에 보이는 상위 5개 게임 기준**: 계정 전체 업적 API가 Steam에 없어, 프로필에 표시 중인 게임들의 달성 개수만 합산한다 (4.4절). 표시되지 않는 나머지 보유 게임의 업적은 집계에 포함되지 않는다.
 - **Bedrock 호출 비용/지연**: 유저 1명 조회당 최소 1회(인사이트) + 친구 수만큼(최대 5회) Bedrock 호출이 발생한다. 트래픽이 늘면 캐싱(예: 동일 유저 재조회 시 RDS에 캐시된 인사이트 재사용) 도입을 검토할 필요가 있다.
 - **CORS/인증 미들웨어 없음**: 현재는 Nginx가 동일 오리진으로 프록시하므로 문제가 없지만, WAS를 다른 오리진에서 직접 호출할 계획이 있다면 CORS 설정이 필요.
 - **CI 검증 스크립트가 `apps/was/app.py` 단일 파일 경로를 하드코딩**하고 있어, 백엔드를 패키지 구조로 확장하려면 `scripts/ci/linux/validate.sh`, `scripts/ci/windows/validate.bat`, `apps/was/Dockerfile`을 함께 수정해야 한다.
