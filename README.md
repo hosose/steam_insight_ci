@@ -139,7 +139,7 @@
 
 - ci 셋업 1회 진행
 ```
-./setup-ci.bat hosose/steam_insight_ci 
+./setup-ci.bat hosose/steam_insight_ci
 ./setup-ci.sh hosose/steam_insight_ci
 ```
 
