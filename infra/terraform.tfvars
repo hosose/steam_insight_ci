@@ -31,4 +31,4 @@ github_ci_branch         = "main"             # 어떤 브런치에서만 ECR pu
 create_github_oidc_provider = false
 # 조회발급 -> 추후 세팅 => git 로그인 처리후 조회 => 모두 숫자임
 github_owner_id         = "112751572"
-github_ci_repository_id = "1324578512"
+github_ci_repository_id = "1326254393"
