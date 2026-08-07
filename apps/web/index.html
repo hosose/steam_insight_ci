@@ -437,6 +437,105 @@
       opacity: 0.7;
     }
 
+    /* Owned Games */
+    .games-section {
+      border-top: 1px solid var(--border-color);
+      padding: 24px 28px 28px;
+    }
+
+    .games-grid {
+      margin-top: 16px;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    }
+
+    .game-card {
+      display: block;
+      border: 1px solid var(--border-color);
+      background: var(--card-bg);
+      overflow: hidden;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.2s;
+    }
+
+    .game-card:hover {
+      border-color: rgba(103, 232, 249, 0.6);
+    }
+
+    .game-card img {
+      width: 100%;
+      aspect-ratio: 460 / 215;
+      object-fit: cover;
+      display: block;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .game-card-body {
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .game-card-name {
+      font-size: 13px;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .game-card-hours {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--cyan-bright);
+      white-space: nowrap;
+    }
+
+    .games-empty {
+      margin-top: 16px;
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+
+    /* Loading states */
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 11px;
+      height: 11px;
+      border: 2px solid rgba(103, 232, 249, 0.25);
+      border-top-color: var(--cyan-bright);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    @keyframes pulse-loading {
+
+      0%,
+      100% {
+        opacity: 0.35;
+      }
+
+      50% {
+        opacity: 0.75;
+      }
+    }
+
+    .is-loading {
+      animation: pulse-loading 1.2s ease-in-out infinite;
+    }
+
     /* Friends Page */
     .friends-header {
       display: flex;
@@ -895,9 +994,14 @@
                   <path d="m9 18 6-6-6-6" />
                 </svg>
               </div>
-              <strong class="discovery-title">공개 친구 184명의<br />플레이 인사이트 보기</strong>
-              <small class="discovery-sub">최근 활동·누적 플레이·함께 할 게임 기준</small>
+              <strong class="discovery-title" id="discoveryTitle">공개 친구 정보 확인하기</strong>
+              <small class="discovery-sub" id="discoverySub">최근 활동·누적 플레이·함께 할 게임 기준</small>
             </button>
+          </div>
+
+          <div id="gamesSection" class="games-section" style="display: none;">
+            <p class="tag-label">OWNED GAMES</p>
+            <div id="gamesGrid" class="games-grid"></div>
           </div>
         </div>
 
@@ -927,8 +1031,8 @@
 
         <!-- Empty State when no user searched -->
         <div id="friendsEmptyState" class="empty-state">
-          <p style="font-size: 14px; color: var(--text-muted);">친구 네트워크를 분석할 기준 유저가 없습니다.</p>
-          <p style="font-size: 12px; color: var(--text-dim); margin-top: 8px;">유저 검색 탭에서 Steam ID 또는 공개 프로필 URL을 입력해
+          <p id="friendsEmptyTitle" style="font-size: 14px; color: var(--text-muted);">친구 네트워크를 분석할 기준 유저가 없습니다.</p>
+          <p id="friendsEmptyDesc" style="font-size: 12px; color: var(--text-dim); margin-top: 8px;">유저 검색 탭에서 Steam ID 또는 공개 프로필 URL을 입력해
             주세요.</p>
         </div>
 
@@ -1052,8 +1156,70 @@
       currentPage: 'search',
       activeUser: null,
       selectedFriendIndex: 0,
-      activeFriendTab: 'recent'
+      activeFriendTab: 'recent',
+      // 'idle'(아직 조회 안 함) | 'ok'(공개 친구 있음) | 'empty'(공개 친구 없음) | 'error'(조회 실패)
+      friendsStatus: 'idle',
+      lastUpdatedAt: null
     };
+
+    // 외부(Steam API/LLM) 데이터를 innerHTML에 꽂기 전에 이스케이프한다.
+    function escapeHtml(value) {
+      const div = document.createElement('div');
+      div.textContent = value == null ? '' : String(value);
+      return div.innerHTML;
+    }
+
+    // "n분 전 갱신 완료" 형태의 상대 시간 문구로 변환한다.
+    function formatRelativeUpdateLabel(timestampMs) {
+      const diffSec = Math.floor((Date.now() - timestampMs) / 1000);
+      if (diffSec < 60) return '방금 갱신 완료';
+      const diffMin = Math.floor(diffSec / 60);
+      if (diffMin < 60) return `${diffMin}분 전 갱신 완료`;
+      const diffHour = Math.floor(diffMin / 60);
+      return `${diffHour}시간 전 갱신 완료`;
+    }
+
+    function refreshUpdateBadge() {
+      if (state.lastUpdatedAt == null) return;
+      const badgeEl = document.getElementById('badgeUpdated');
+      if (badgeEl) badgeEl.textContent = formatRelativeUpdateLabel(state.lastUpdatedAt);
+    }
+
+    // 검색 결과가 오기 전까지 이전 값/하드코딩된 예시 값 대신 로딩 상태를 보여준다.
+    const LOADING_TARGET_IDS = ['metricGames', 'metricHours', 'metricAchievements', 'metricFriends'];
+
+    function setLoadingState(isLoading) {
+      LOADING_TARGET_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.toggle('is-loading', isLoading);
+        if (isLoading) el.textContent = '···';
+      });
+
+      const insightTitleEl = document.getElementById('insightTitle');
+      const insightDescEl = document.getElementById('insightDesc');
+      const badgeEl = document.getElementById('badgeUpdated');
+
+      if (isLoading) {
+        insightTitleEl.classList.add('is-loading');
+        insightDescEl.classList.add('is-loading');
+        insightTitleEl.textContent = '분석 중...';
+        insightDescEl.textContent = 'Steam 데이터를 실시간으로 불러오는 중입니다...';
+
+        discoveryTitle.classList.add('is-loading');
+        discoveryTitle.textContent = '친구 정보를 불러오는 중...';
+        discoverySub.textContent = '';
+
+        gamesSection.style.display = 'block';
+        gamesGrid.innerHTML = '<p class="games-empty"><span class="spinner"></span>게임 목록을 불러오는 중...</p>';
+
+        if (badgeEl) badgeEl.innerHTML = '<span class="spinner"></span>불러오는 중...';
+      } else {
+        insightTitleEl.classList.remove('is-loading');
+        insightDescEl.classList.remove('is-loading');
+        discoveryTitle.classList.remove('is-loading');
+      }
+    }
 
     // Static Data
     const friendsData = [
@@ -1084,10 +1250,16 @@
     const profileAvatar = document.getElementById('profileAvatar');
     const profileUsername = document.getElementById('profileUsername');
     const goToFriendsBtn = document.getElementById('goToFriendsBtn');
+    const discoveryTitle = document.getElementById('discoveryTitle');
+    const discoverySub = document.getElementById('discoverySub');
+    const gamesSection = document.getElementById('gamesSection');
+    const gamesGrid = document.getElementById('gamesGrid');
 
     const friendsSubtitle = document.getElementById('friendsSubtitle');
     const friendsBadge = document.getElementById('friendsBadge');
     const friendsEmptyState = document.getElementById('friendsEmptyState');
+    const friendsEmptyTitle = document.getElementById('friendsEmptyTitle');
+    const friendsEmptyDesc = document.getElementById('friendsEmptyDesc');
     const friendsActiveContent = document.getElementById('friendsActiveContent');
     const friendsListContainer = document.getElementById('friendsListContainer');
     const friendsTabTag = document.getElementById('friendsTabTag');
@@ -1147,6 +1319,7 @@
 
       heroBox.classList.remove('centered');
       profileSection.style.display = 'block';
+      setLoadingState(true);
 
       const searchBtn = document.getElementById('searchSubmitBtn');
       if (searchBtn) searchBtn.disabled = true;
@@ -1156,6 +1329,7 @@
         const res = await fetch(`/api/user/${encodeURIComponent(targetUser)}`);
         if (!res.ok) throw new Error(`WAS API Error (HTTP ${res.status})`);
         const data = await res.json();
+        setLoadingState(false);
 
         if (data.metrics) {
           document.getElementById('metricGames').textContent = data.metrics.games;
@@ -1163,18 +1337,57 @@
           document.getElementById('metricAchievements').textContent = data.metrics.achievements;
           document.getElementById('metricFriends').textContent = data.metrics.friends;
         }
-        if (data.playstyle) document.getElementById('insightTitle').textContent = data.playstyle;
-        if (data.insight) document.getElementById('insightDesc').textContent = data.insight;
-        if (data.was_pod) {
-          navStatusText.textContent = `WAS POD: ${data.was_pod} · LIVE`;
-          const badgeEl = document.getElementById('badgeUpdated');
-          if (badgeEl) badgeEl.textContent = `WAS 갱신 완료 (${data.was_pod})`;
+        document.getElementById('insightTitle').textContent = data.playstyle || '분석 정보 없음';
+        document.getElementById('insightDesc').textContent = data.insight || 'AI 인사이트를 생성하지 못했습니다. 잠시 후 다시 검색해 주세요.';
+
+        // 내부 Pod 해시 대신 사용자 입장에서 의미 있는 "실시간 연동 중" 문구 + 상대 시간으로 표시.
+        // Pod 해시는 디버깅용으로 title 툴팁에만 남겨둔다.
+        navStatusText.textContent = '실시간 서버 연동 중 · LIVE';
+        if (data.was_pod) navStatusText.title = `WAS Pod: ${data.was_pod}`;
+        state.lastUpdatedAt = Date.now();
+        refreshUpdateBadge();
+
+        // 보유 게임 목록 (이미지 + Steam 스토어 링크)
+        gamesSection.style.display = 'block';
+        if (data.top_games && data.top_games.length > 0) {
+          gamesGrid.innerHTML = data.top_games.map(g => `
+            <a class="game-card" href="${g.storeUrl ? encodeURI(g.storeUrl) : '#'}" target="_blank" rel="noopener noreferrer">
+              <img src="${g.image ? encodeURI(g.image) : ''}" alt="${escapeHtml(g.name)}" loading="lazy" onerror="this.style.display='none'" />
+              <div class="game-card-body">
+                <span class="game-card-name">${escapeHtml(g.name)}</span>
+                <span class="game-card-hours">${escapeHtml(g.hours)}h</span>
+              </div>
+            </a>
+          `).join('');
+        } else {
+          gamesGrid.innerHTML = '<p class="games-empty">표시할 게임 정보가 없습니다.</p>';
+        }
+
+        // 친구 발견 버튼 문구를 실제 공개 친구 수 기준으로 갱신
+        const friendsCount = data.metrics ? (parseInt(data.metrics.friends, 10) || 0) : 0;
+        if (friendsCount > 0) {
+          discoveryTitle.innerHTML = `공개 친구 ${friendsCount}명의<br />플레이 인사이트 보기`;
+          discoverySub.textContent = '최근 활동·누적 플레이·함께 할 게임 기준';
+        } else {
+          discoveryTitle.textContent = '공개된 친구가 없습니다';
+          discoverySub.textContent = '친구 목록이 비공개이거나 등록된 공개 친구가 없습니다';
         }
       } catch (err) {
         console.warn('WAS API connection failed, using fallback:', err);
-        navStatusText.textContent = `WAS OFFLINE · LOCAL DATA`;
+        setLoadingState(false);
+        LOADING_TARGET_IDS.forEach(id => {
+          document.getElementById(id).textContent = '-';
+        });
+        document.getElementById('insightTitle').textContent = '분석 정보 없음';
+        document.getElementById('insightDesc').textContent = '서버와 연결할 수 없습니다. 잠시 후 다시 검색해 주세요.';
+        discoveryTitle.textContent = '친구 정보를 불러오지 못했습니다';
+        discoverySub.textContent = '';
+        navStatusText.textContent = '서버 연결 실패 · OFFLINE';
+        navStatusText.removeAttribute('title');
+        state.lastUpdatedAt = null;
         const badgeEl = document.getElementById('badgeUpdated');
-        if (badgeEl) badgeEl.textContent = `로컬 데이터 표시`;
+        if (badgeEl) badgeEl.textContent = '갱신 실패';
+        gamesSection.style.display = 'none';
       } finally {
         if (searchBtn) searchBtn.disabled = false;
       }
@@ -1184,12 +1397,20 @@
         const resFriends = await fetch(`/api/friends/${encodeURIComponent(targetUser)}`);
         if (resFriends.ok) {
           const friendsRes = await resFriends.json();
-          if (friendsRes.friends && friendsRes.friends.length > 0) {
+          // 응답이 빈 배열이어도(공개 친구 없음) 그대로 반영한다 — 이전에는 length > 0일 때만
+          // 덮어써서 실제로 친구가 0명인 계정도 목업 친구 5명이 계속 보이는 문제가 있었다.
+          if (Array.isArray(friendsRes.friends)) {
             friendsData.splice(0, friendsData.length, ...friendsRes.friends);
+            state.friendsStatus = friendsRes.friends.length > 0 ? 'ok' : 'empty';
+          } else {
+            state.friendsStatus = 'error';
           }
+        } else {
+          state.friendsStatus = 'error';
         }
       } catch (err) {
         console.warn('WAS Friends API call failed:', err);
+        state.friendsStatus = 'error';
       }
 
       setPage('search');
@@ -1207,6 +1428,8 @@
     // Render Friends Page
     function renderFriendsPage() {
       if (!state.activeUser) {
+        friendsEmptyTitle.textContent = '친구 네트워크를 분석할 기준 유저가 없습니다.';
+        friendsEmptyDesc.textContent = '유저 검색 탭에서 Steam ID 또는 공개 프로필 URL을 입력해 주세요.';
         friendsEmptyState.style.display = 'block';
         friendsActiveContent.style.display = 'none';
         friendsBadge.style.display = 'none';
@@ -1214,10 +1437,31 @@
         return;
       }
 
+      if (state.friendsStatus === 'error') {
+        friendsEmptyTitle.textContent = '친구 정보를 불러오지 못했습니다.';
+        friendsEmptyDesc.textContent = 'WAS/Steam API 연결 상태를 확인하고 잠시 후 다시 검색해 주세요.';
+        friendsEmptyState.style.display = 'block';
+        friendsActiveContent.style.display = 'none';
+        friendsBadge.style.display = 'none';
+        friendsSubtitle.innerHTML = `<b style="color: #f8fafc;">${escapeHtml(state.activeUser)}</b>님의 친구 정보를 불러오지 못했습니다.`;
+        return;
+      }
+
+      if (state.friendsStatus === 'empty' || friendsData.length === 0) {
+        friendsEmptyTitle.textContent = '공개된 친구가 없습니다.';
+        friendsEmptyDesc.textContent = '이 유저는 친구 목록이 비공개이거나 등록된 공개 친구가 없습니다.';
+        friendsEmptyState.style.display = 'block';
+        friendsActiveContent.style.display = 'none';
+        friendsBadge.style.display = 'none';
+        friendsSubtitle.innerHTML = `<b style="color: #f8fafc;">${escapeHtml(state.activeUser)}</b>님은 공개된 친구가 없습니다.`;
+        return;
+      }
+
       friendsEmptyState.style.display = 'none';
       friendsActiveContent.style.display = 'block';
       friendsBadge.style.display = 'block';
-      friendsSubtitle.innerHTML = `<b style="color: #f8fafc;">${state.activeUser}</b>님의 공개 친구 중, 지금 눈여겨볼 만한 플레이어를 발견합니다.`;
+      friendsBadge.querySelector('.stats-badge-val').textContent = `${friendsData.length} / ${friendsData.length}`;
+      friendsSubtitle.innerHTML = `<b style="color: #f8fafc;">${escapeHtml(state.activeUser)}</b>님의 공개 친구 중, 지금 눈여겨볼 만한 플레이어를 발견합니다.`;
 
       // Sort friends according to active tab
       let list = [...friendsData];
@@ -1244,10 +1488,10 @@
         return `
           <button class="friend-row ${isSelected ? 'selected' : ''}" onclick="selectFriend(${i})">
             <span class="friend-rank">0${i + 1}</span>
-            <div class="friend-avatar">${f.code}</div>
+            <div class="friend-avatar">${escapeHtml(f.code)}</div>
             <div class="friend-details">
-              <strong class="friend-name">${f.name}</strong>
-              <p class="friend-sub">${f.country} · ${f.game}</p>
+              <strong class="friend-name">${escapeHtml(f.name)}</strong>
+              <p class="friend-sub">${escapeHtml(f.country)} · ${escapeHtml(f.game)}</p>
             </div>
             <div class="friend-stat">
               <span class="friend-stat-val">${valText}</span>
@@ -1271,22 +1515,20 @@
       detailAvatar.textContent = friend.code;
       detailName.textContent = friend.name;
       detailSubInfo.textContent = `${state.activeUser}님의 공개 친구 · ${friend.country}`;
-      detailTrait.textContent = friend.trait;
+      detailTrait.textContent = friend.trait || '분석 정보 없음';
       detailTimes.textContent = `최근 2주 ${friend.twoWeeks} · 누적 ${friend.total}`;
       detailShared.textContent = friend.shared;
 
-      const games = [
-        [friend.game, friend.twoWeeks],
-        ['Helldivers 2', '8.3h'],
-        ['Lethal Company', '4.1h']
-      ];
+      const games = friend.game && friend.game !== '—' ? [[friend.game, friend.twoWeeks]] : [];
 
-      detailRecentGames.innerHTML = games.map(g => `
-        <div class="recent-game-item">
-          <span>${g[0]}</span>
-          <b style="font-family: var(--font-mono); color: var(--text-muted);">${g[1]}</b>
-        </div>
-      `).join('');
+      detailRecentGames.innerHTML = games.length > 0
+        ? games.map(g => `
+            <div class="recent-game-item">
+              <span>${escapeHtml(g[0])}</span>
+              <b style="font-family: var(--font-mono); color: var(--text-muted);">${escapeHtml(g[1])}</b>
+            </div>
+          `).join('')
+        : '<p style="font-size: 12px; color: var(--text-dim); margin-top: 8px;">최근 플레이 정보가 없습니다.</p>';
 
       reSearchBtn.onclick = () => runSearch(friend.name);
     }
@@ -1329,6 +1571,9 @@
 
     // Initialize Default State
     renderGlobalPage();
+
+    // "n분 전 갱신 완료" 배지가 시간이 지나도 계속 최신 상태를 반영하도록 주기적으로 갱신
+    setInterval(refreshUpdateBadge, 30000);
   </script>
 </body>
 

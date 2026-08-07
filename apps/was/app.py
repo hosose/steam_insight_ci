@@ -66,9 +66,12 @@ REQUEST_COUNTER_TABLE_SQL = """
 
 STEAM_API_BASE = "https://api.steampowered.com"
 STEAM_ID64_RE = re.compile(r"^\d{17}$")
+STEAM_ACCOUNT_ID_RE = re.compile(r"^\d{1,10}$")
+STEAM_ID64_BASE = 76561197960265728  # SteamID64 = 이 값 + AccountID32(게임 내 "친구 코드"로 표시되는 값)
+STEAM_ACCOUNT_ID_MAX = 2**32
 
 BEDROCK_DEFAULT_REGION = "us-east-1"
-BEDROCK_DEFAULT_MODEL_ID = "anthropic.claude-3-5-haiku-20241022-v1:0"
+BEDROCK_DEFAULT_MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0"
 
 
 def required_env(name: str) -> str:
@@ -141,10 +144,26 @@ class SteamUserNotFoundError(Exception):
 
 
 async def resolve_steam_id(client: httpx.AsyncClient, api_key: str, identifier: str) -> str:
-    """SteamID64, 커스텀 URL, 프로필 URL을 모두 받아 SteamID64로 정규화한다."""
+    """SteamID64, AccountID(친구 코드), 커스텀 URL, 프로필 URL을 모두 받아 SteamID64로 정규화한다.
+
+    s.team 공유 단축 링크(`https://s.team/p/...`)는 로그인 세션이 있어야 최종
+    프로필로 리다이렉트되는 Steam 자체의 제약 때문에 API 키만으로는 여기서
+    풀 수 없다 — 그런 값은 뒤의 ResolveVanityURL 단계에서 "찾을 수 없음"으로
+    처리된다.
+    """
     candidate = identifier.strip().rstrip("/").rsplit("/", 1)[-1]
     if STEAM_ID64_RE.match(candidate):
         return candidate
+
+    if STEAM_ACCOUNT_ID_RE.match(candidate) and int(candidate) < STEAM_ACCOUNT_ID_MAX:
+        # 게임 내에서 "친구 코드"/AccountID로 표시되는 9~10자리 숫자를 SteamID64로 변환해
+        # 실제 존재하는 계정인지 확인한다. 존재하지 않으면 바니티 URL 해석으로 넘어간다.
+        account_id_candidate = str(STEAM_ID64_BASE + int(candidate))
+        try:
+            await fetch_player_summary(client, api_key, account_id_candidate)
+            return account_id_candidate
+        except (SteamUserNotFoundError, httpx.HTTPError):
+            pass
 
     response = await client.get(
         f"{STEAM_API_BASE}/ISteamUser/ResolveVanityURL/v1/",
@@ -199,10 +218,12 @@ async def fetch_friend_list(client: httpx.AsyncClient, api_key: str, steamid: st
             params={"key": api_key, "steamid": steamid, "relationship": "friend"},
         )
         response.raise_for_status()
-    except httpx.HTTPStatusError:
-        # 친구 목록이 비공개인 프로필은 403을 반환한다 — 빈 목록으로 취급한다.
+        return response.json().get("friendslist", {}).get("friends", [])
+    except (httpx.HTTPError, ValueError):
+        # 친구 목록이 비공개인 프로필은 403을 반환한다. 타임아웃/연결 오류 등
+        # 다른 네트워크·파싱 실패도 friends_task가 analyze_user의 보호되지 않은
+        # 두 번째 asyncio.gather에서 그대로 전파돼 500을 유발하지 않도록 빈 목록으로 취급한다.
         return []
-    return response.json().get("friendslist", {}).get("friends", [])
 
 
 async def estimate_achievement_rate(
@@ -242,12 +263,26 @@ def minutes_to_hours_label(minutes: float) -> str:
     return f"{round(minutes / 60):,}h"
 
 
-def top_games_by_playtime(games: list[dict], limit: int = 5) -> list[dict]:
+def build_game_entries(games: list[dict], limit: int = 5) -> list[dict]:
+    """플레이 시간 상위 게임을 이름/시간과 함께 Steam 스토어 이미지·링크까지 포함해 반환한다.
+
+    이미지/스토어 URL은 appid만 있으면 예측 가능한 Steam CDN/스토어 URL 패턴이라
+    별도 API 호출 없이 구성한다.
+    """
     ranked = sorted(games, key=lambda g: g.get("playtime_forever", 0), reverse=True)
-    return [
-        {"name": g.get("name", "Unknown"), "hours": round(g.get("playtime_forever", 0) / 60, 1)}
-        for g in ranked[:limit]
-    ]
+    entries = []
+    for g in ranked[:limit]:
+        appid = g.get("appid")
+        entries.append(
+            {
+                "appid": appid,
+                "name": g.get("name", "Unknown"),
+                "hours": round(g.get("playtime_forever", 0) / 60, 1),
+                "image": f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg" if appid else None,
+                "storeUrl": f"https://store.steampowered.com/app/{appid}" if appid else None,
+            }
+        )
+    return entries
 
 
 # ---------------------------------------------------------------------------
@@ -280,13 +315,27 @@ def extract_json_object(text: str) -> dict:
     return json.loads(match.group(0))
 
 
+def normalize_bedrock_api_key(raw_key: str) -> str:
+    """AWS 콘솔에서 Bedrock API 키를 복사하면 'BedrockAPIKey-<id>,<실제 토큰>' 형태로
+    Key ID와 실제 토큰이 콤마로 함께 붙어오는 경우가 있다. 실제 인증에 쓰이는 값은
+    'ABSK'로 시작하는 뒷부분뿐이므로, 콤마가 있으면 'ABSK'로 시작하는 조각만 취한다.
+    """
+    raw_key = raw_key.strip()
+    if "," in raw_key:
+        for part in raw_key.split(","):
+            part = part.strip()
+            if part.startswith("ABSK"):
+                return part
+    return raw_key
+
+
 def bedrock_config() -> tuple[str, str, str] | None:
     api_key = os.getenv("BEDROCK_API_KEY")
     if not api_key:
         return None
     region = os.getenv("BEDROCK_REGION", BEDROCK_DEFAULT_REGION)
     model_id = os.getenv("BEDROCK_MODEL_ID", BEDROCK_DEFAULT_MODEL_ID)
-    return api_key, region, model_id
+    return normalize_bedrock_api_key(api_key), region, model_id
 
 
 async def generate_user_insight(
@@ -396,22 +445,24 @@ async def analyze_user(username: str, request: Request) -> dict:
         raise HTTPException(status_code=502, detail=f"Steam API 조회 실패: {exc}") from exc
 
     display_name = summary.get("personaname", username)
-    ranked_games = sorted(games, key=lambda g: g.get("playtime_forever", 0), reverse=True)
-    top_games = top_games_by_playtime(games)
+    # 프론트엔드 "보유 게임" 카드에는 넉넉히 12개까지 보여주고, Bedrock 프롬프트에는
+    # 그중 상위 5개만 사용한다 (games_summary가 너무 길어지지 않도록).
+    display_games = build_game_entries(games, limit=12)
+    top_games_for_prompt = display_games[:5]
     total_minutes = sum(g.get("playtime_forever", 0) for g in games)
 
     friends_task = fetch_friend_list(client, steam_api_key, steamid)
-    achievement_task = estimate_achievement_rate(client, steam_api_key, steamid, ranked_games)
-    insight_task = generate_user_insight(client, display_name, top_games)
+    achievement_task = estimate_achievement_rate(client, steam_api_key, steamid, display_games)
+    insight_task = generate_user_insight(client, display_name, top_games_for_prompt)
 
     friends, achievement_rate, insight_result = await asyncio.gather(
         friends_task, achievement_task, insight_task
     )
 
-    if insight_result is not None:
-        playstyle, insight = insight_result
-    else:
-        playstyle, insight = random.choice(PLAYSTYLES), random.choice(INSIGHTS)
+    # 실 데이터 경로에서는 플레이스타일/인사이트를 Bedrock 생성 결과로만 채운다.
+    # BEDROCK_API_KEY 미설정이나 호출 실패 시 random 하드코딩 값으로 대체하지 않고
+    # null로 남겨, 프론트엔드가 "생성 실패/미설정" 상태를 있는 그대로 알 수 있게 한다.
+    playstyle, insight = insight_result if insight_result is not None else (None, None)
 
     return {
         "status": "ok",
@@ -420,11 +471,12 @@ async def analyze_user(username: str, request: Request) -> dict:
         "metrics": {
             "games": f"{len(games)}",
             "hours": minutes_to_hours_label(total_minutes),
-            "achievements": f"{achievement_rate}%" if achievement_rate is not None else "N/A",
+            "achievements": f"{achievement_rate}%" if achievement_rate is not None else "0%",
             "friends": f"{len(friends)}명",
         },
         "playstyle": playstyle,
         "insight": insight,
+        "top_games": display_games,
         "message": f"WAS Pod ({socket.gethostname()})에서 유저 '{display_name}' 분석 데이터를 생성했습니다.",
     }
 
@@ -459,7 +511,7 @@ async def build_real_friend_entry(
     total_minutes = sum(g.get("playtime_forever", 0) for g in games)
     two_weeks_minutes = sum(g.get("playtime_2weeks", 0) for g in recent)
     shared_count = len(my_game_appids & {g.get("appid") for g in games})
-    top_games = top_games_by_playtime(games)
+    top_games = build_game_entries(games)
     display_name = summary.get("personaname", "Unknown")
 
     return {
@@ -504,9 +556,10 @@ async def get_user_friends(username: str, request: Request) -> dict:
     friends = [entry for entry in entries if entry is not None]
 
     async def with_trait(friend: dict) -> dict:
+        # trait도 Bedrock 생성 결과로만 채운다 — 실패/미설정 시 random 하드코딩
+        # 문구 대신 null로 남긴다 (analyze_user의 playstyle/insight와 동일한 원칙).
         games_summary = ", ".join(f"{g['name']} {g['hours']}h" for g in friend.pop("_top_games"))
-        trait = await generate_friend_trait(client, friend["name"], games_summary)
-        friend["trait"] = trait or random.choice(FRIEND_TRAITS)
+        friend["trait"] = await generate_friend_trait(client, friend["name"], games_summary)
         return friend
 
     friends = await asyncio.gather(*(with_trait(friend) for friend in friends))
