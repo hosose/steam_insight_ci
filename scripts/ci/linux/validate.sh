@@ -63,7 +63,7 @@ wait_for_url "http://127.0.0.1:18080/health" "WEB"
 
 echo "[7/7] WAS 이미지 빌드 및 상태 확인"
 docker build --platform linux/amd64 --tag "${WAS_IMAGE}" "${ROOT_DIR}/apps/was"
-docker run --detach --name "${WAS_CONTAINER}" --publish 18000:8000 "${WAS_IMAGE}" >/dev/null
+docker run --detach --name "${WAS_CONTAINER}" --publish 18000:8080 "${WAS_IMAGE}" >/dev/null
 wait_for_url "http://127.0.0.1:18000/health" "WAS"
 
 echo

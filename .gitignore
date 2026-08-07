@@ -8,6 +8,7 @@ crash.log
 # Secrets and local configuration
 *.pem
 .env
+k8s/app-secrets.yaml
 # 임시로 유지
 # infra/terraform.tfvars
 
@@ -23,3 +24,6 @@ rendered-*.yaml
 # Python
 __pycache__/
 *.pyc
+
+# docs
+.docs
