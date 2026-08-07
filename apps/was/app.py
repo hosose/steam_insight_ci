@@ -1,7 +1,10 @@
 import os
 import socket
 import random
+import asyncio
+import time
 from contextlib import closing
+from datetime import datetime
 
 import pymysql
 from fastapi import FastAPI, HTTPException
@@ -27,6 +30,16 @@ load_env_file()
 
 # Steam API Key (없을 시 모의/공개 XML 프로필 데이터로 작동)
 STEAM_API_KEY = os.getenv("STEAM_API_KEY")
+
+CHART_URL = (
+    "https://api.steampowered.com/"
+    "ISteamChartsService/GetGamesByConcurrentPlayers/v1/"
+)
+STORE_URL = (
+    "https://store.steampowered.com/"
+    "api/appdetails"
+)
+CHART_COLLECT_INTERVAL_SECONDS = 15 * 60
 
 def init_db_tables(connection):
     with connection.cursor() as cursor:
@@ -55,6 +68,34 @@ def init_db_tables(connection):
                 search_query VARCHAR(255) NOT NULL,
                 steam_id VARCHAR(64),
                 searched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS game_chart_rankings (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                appid BIGINT NOT NULL,
+                ranking INT,
+                concurrent_in_game INT,
+                peak_in_game INT,
+                collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS game_info (
+                appid BIGINT PRIMARY KEY,
+                name VARCHAR(255),
+                header_image TEXT,
+                short_description TEXT,
+                release_date VARCHAR(100),
+                developers VARCHAR(500),
+                publishers VARCHAR(500),
+                genres VARCHAR(500),
+                discount_percent INT DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             )
             """
         )
@@ -290,6 +331,120 @@ def get_steam_api_data(user_input: str) -> dict | None:
         print(f"Steam API Call failed: {e}")
         return None
 
+def fetch_top_played_games() -> list[dict]:
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    req = urllib.request.Request(CHART_URL, headers=headers)
+    with urllib.request.urlopen(req, timeout=10) as response:
+        data = json.loads(response.read().decode('utf-8'))
+    return data.get("response", {}).get("ranks", [])
+
+
+def fetch_app_details(appid: int) -> dict | None:
+    url = f"{STORE_URL}?appids={appid}"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=10) as response:
+        data = json.loads(response.read().decode('utf-8'))
+    entry = data.get(str(appid))
+    if not entry or not entry.get("success"):
+        return None
+    return entry.get("data", {})
+
+
+def save_chart_rankings(connection, ranks: list[dict], snapshot_time: datetime) -> None:
+    with connection.cursor() as cursor:
+        for entry in ranks:
+            appid = entry.get("appid")
+            if not appid:
+                continue
+            cursor.execute(
+                """
+                INSERT INTO game_chart_rankings (appid, ranking, concurrent_in_game, peak_in_game, collected_at)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (appid, entry.get("rank"), entry.get("concurrent_in_game"), entry.get("peak_in_game"), snapshot_time),
+            )
+
+
+def game_info_exists(connection, appid: int) -> bool:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT appid FROM game_info WHERE appid = %s", (appid,))
+        return cursor.fetchone() is not None
+
+
+def save_game_info(connection, appid: int, details: dict) -> None:
+    discount_percent = (details.get("price_overview") or {}).get("discount_percent", 0)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO game_info
+            (appid, name, header_image, short_description, release_date, developers, publishers, genres, discount_percent)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+            name=VALUES(name), header_image=VALUES(header_image), short_description=VALUES(short_description),
+            release_date=VALUES(release_date), developers=VALUES(developers), publishers=VALUES(publishers),
+            genres=VALUES(genres), discount_percent=VALUES(discount_percent)
+            """,
+            (
+                appid,
+                details.get("name"),
+                details.get("header_image"),
+                details.get("short_description"),
+                (details.get("release_date") or {}).get("date"),
+                ", ".join(details.get("developers") or []),
+                ", ".join(details.get("publishers") or []),
+                ", ".join(g.get("description", "") for g in details.get("genres") or []),
+                discount_percent,
+            ),
+        )
+
+
+def collect_game_charts() -> None:
+    if not os.getenv("DB_HOST"):
+        return
+
+    try:
+        ranks = fetch_top_played_games()
+    except Exception as e:
+        print(f"Chart fetch error: {e}")
+        return
+
+    try:
+        with closing(db_connection()) as connection:
+            init_db_tables(connection)
+            snapshot_time = datetime.utcnow()
+            save_chart_rankings(connection, ranks, snapshot_time)
+
+            new_appid_count = 0
+            for entry in ranks:
+                appid = entry.get("appid")
+                if not appid or game_info_exists(connection, appid):
+                    continue
+                try:
+                    details = fetch_app_details(appid)
+                    if details:
+                        save_game_info(connection, appid, details)
+                        new_appid_count += 1
+                    time.sleep(1)  # store API 요청 과다 방지
+                except Exception as ed:
+                    print(f"Game info fetch warning (appid={appid}): {ed}")
+
+        print(f"Chart snapshot saved: {len(ranks)} games, {new_appid_count} new game_info rows")
+    except Exception as e:
+        print(f"Chart snapshot save error: {e}")
+
+
+async def chart_collection_loop():
+    while True:
+        await asyncio.get_event_loop().run_in_executor(None, collect_game_charts)
+        await asyncio.sleep(CHART_COLLECT_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def start_chart_scheduler():
+    asyncio.create_task(chart_collection_loop())
+
+
 def generate_mock_user_data(username: str) -> dict:
     hash_val = int(hashlib.md5(username.encode('utf-8')).hexdigest(), 16)
     games_count = 100 + (hash_val % 400)
@@ -435,6 +590,69 @@ def get_user_friends(username: str) -> dict:
         "was_pod": socket.gethostname(),
         "friends": sampled
     }
+
+
+@app.get("/api/trends")
+def get_trend_games(limit: int = 4) -> dict:
+    try:
+        with closing(db_connection()) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT MAX(collected_at) AS latest FROM game_chart_rankings")
+                latest_ts = (cursor.fetchone() or {}).get("latest")
+
+                if not latest_ts:
+                    return {"status": "ok", "trends": []}
+
+                cursor.execute(
+                    "SELECT MAX(collected_at) AS previous FROM game_chart_rankings WHERE collected_at < %s",
+                    (latest_ts,),
+                )
+                previous_ts = (cursor.fetchone() or {}).get("previous")
+
+                cursor.execute(
+                    """
+                    SELECT r.appid, r.ranking, r.concurrent_in_game, g.name, g.genres, g.discount_percent
+                    FROM game_chart_rankings r
+                    LEFT JOIN game_info g ON g.appid = r.appid
+                    WHERE r.collected_at = %s
+                    ORDER BY r.ranking ASC
+                    LIMIT %s
+                    """,
+                    (latest_ts, limit),
+                )
+                latest_rows = cursor.fetchall()
+
+                previous_map = {}
+                if previous_ts:
+                    cursor.execute(
+                        "SELECT appid, concurrent_in_game FROM game_chart_rankings WHERE collected_at = %s",
+                        (previous_ts,),
+                    )
+                    previous_map = {row["appid"]: row["concurrent_in_game"] for row in cursor.fetchall()}
+
+        trends = []
+        for row in latest_rows:
+            current = row["concurrent_in_game"] or 0
+            prev = previous_map.get(row["appid"])
+            change_pct = round((current - prev) / prev * 100, 1) if prev else None
+
+            genres = row.get("genres") or ""
+            genre_label = genres.split(",")[0].strip().upper() if genres else "-"
+            discount_percent = row.get("discount_percent") or 0
+
+            trends.append({
+                "appid": row["appid"],
+                "name": row.get("name") or f"App {row['appid']}",
+                "genre": genre_label,
+                "active": f"{current:,}",
+                "change": f"{change_pct:+.1f}%" if change_pct is not None else "—",
+                "isUp": change_pct is None or change_pct >= 0,
+                "discount": f"-{discount_percent}%" if discount_percent > 0 else "—",
+            })
+
+        return {"status": "ok", "trends": trends}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Trend data fetch failed: {exc}") from exc
 
 
 @app.get("/api/db")

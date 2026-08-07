@@ -1064,7 +1064,8 @@
       { name: "Pokelawls", code: "PL", country: "Canada", twoWeeks: "21.8h", total: "3,926h", game: "Rust", shared: "15개", trait: "생존 장르와 자유도 높은 샌드박스에 오래 머무는 탐험가" }
     ];
 
-    const trendGames = [
+    // WAS /api/trends 응답으로 교체되기 전까지 표시할 폴백 데이터
+    let trendGames = [
       { name: "Counter-Strike 2", genre: "FPS", active: "1,418,229", change: "+12.4%", isUp: true, discount: "—" },
       { name: "PUBG: BATTLEGROUNDS", genre: "BATTLE ROYALE", active: "644,938", change: "+9.1%", isUp: true, discount: "-60%" },
       { name: "Dota 2", genre: "MOBA", active: "712,451", change: "+5.8%", isUp: true, discount: "—" },
@@ -1347,8 +1348,24 @@
       `).join('');
     }
 
+    // WAS API Call for Global Trend Games (15분 주기로 수집된 실데이터)
+    async function loadTrendGames() {
+      try {
+        const res = await fetch('/api/trends');
+        if (!res.ok) throw new Error(`WAS API Error (HTTP ${res.status})`);
+        const data = await res.json();
+        if (data.trends && data.trends.length > 0) {
+          trendGames = data.trends;
+          renderGlobalPage();
+        }
+      } catch (err) {
+        console.warn('WAS Trends API call failed, using fallback:', err);
+      }
+    }
+
     // Initialize Default State
     renderGlobalPage();
+    loadTrendGames();
   </script>
 </body>
 
