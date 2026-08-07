@@ -1,288 +1,209 @@
-# 스인싸 (Steam Insight) 🎮
+# 목표
+- CI Workflow 구성
+  ```
+    # 소스 변경 => push => GitHub Actions => 이미지 생성 => 임시인증(OIDC) => ECR 업데이트 : devops관련
+    # 최초 1회 인프라 구성(테라폼) => 변경시 반영됨
+    devops_tf_k8s_ci -> GitHub Actions -> AWS ECR 
+  ```
+- 지금까지 구성한 인프라(aws 기반 테라폼구성)와 플랫폼/서비스(쿠버네티스) 위에 Devops 올려서 형태 최종 완성
 
-> **Steam 프로필 인텔리전스 플랫폼** — Steam 공개 데이터를 기반으로 유저의 플레이 취향, 친구 네트워크, 글로벌 게임 트렌드를 분석합니다.
-
-![Stack](https://img.shields.io/badge/Frontend-Next.js_15-black?logo=next.js)
-![Stack](https://img.shields.io/badge/Backend-Express_+_TypeScript-blue?logo=express)
-![Stack](https://img.shields.io/badge/Style-Tailwind_CSS_v4-38BDF8?logo=tailwindcss)
-![Stack](https://img.shields.io/badge/Container-Docker-2496ED?logo=docker)
-![Stack](https://img.shields.io/badge/AI-AWS_Bedrock-FF9900?logo=amazon-aws)
-
----
-
-## 📌 프로젝트 개요
-
-**스인싸(Steam Insight)**는 Steam Web API를 통해 공개된 데이터를 수집·분석하여, 아래 세 가지 핵심 인사이트를 제공하는 대시보드 서비스입니다.
-
-| 기능 | 설명 |
-|------|------|
-| 🔍 **유저 검색** | Steam ID / 프로필 URL / 커스텀 ID로 공개 프로필 분석. 보유 게임, 누적 플레이, 업적 달성률, 플레이 취향을 도출 |
-| 🌍 **글로벌 트렌드** | Steam 동시접속자 수·할인 정보·급상승 게임을 실시간으로 탐색. 탭별로 인기순/할인순/카테고리별 필터 지원 |
-| 👥 **친구 네트워크** | 기준 유저의 공개 친구 목록을 플레이타임 기준으로 분석. 함께 보유한 게임, 추천 함께 플레이 게임, 플레이 스타일 인사이트 제공 |
-
----
-
-## 🏗️ 프로젝트 구조
-
+- 세부적인 workflow
 ```
-Steam_Insight_new_version/
-└── Steam_Insight_Dashboard/          # 메인 모노레포
-    ├── app/
-    │   ├── web/                      # 프론트엔드 (Next.js 15 + Tailwind CSS v4)
-    │   │   ├── app/
-    │   │   │   ├── page.tsx          # 메인 페이지 (SearchPage / GlobalPage / FriendsPage)
-    │   │   │   ├── layout.tsx        # 루트 레이아웃
-    │   │   │   ├── globals.css       # 글로벌 스타일
-    │   │   │   ├── components/       # 공용 컴포넌트 (ImageWithFallback 등)
-    │   │   │   └── imports/          # 정적 에셋 (로고 이미지 등)
-    │   │   ├── Dockerfile
-    │   │   ├── next.config.ts
-    │   │   ├── tsconfig.json
-    │   │   └── package.json          # sinsa-frontend
-    │   │
-    │   └── was/                      # 백엔드 (Express + TypeScript)
-    │       ├── src/
-    │       │   ├── index.ts          # Express 서버 진입점
-    │       │   ├── config/
-    │       │   │   └── env.ts        # 환경변수 스키마 (Zod 검증)
-    │       │   ├── routes/
-    │       │   │   ├── steam.routes.ts        # GET /api/steam/profile
-    │       │   │   ├── trends.routes.ts       # GET /api/trends/global
-    │       │   │   ├── influencers.routes.ts  # GET /api/influencers
-    │       │   │   └── health.routes.ts       # GET /health (Docker healthcheck)
-    │       │   └── services/
-    │       │       └── steam.service.ts       # Steam API 연동 + Mock 데이터
-    │       ├── Dockerfile
-    │       ├── tsconfig.json
-    │       └── package.json          # sinsa-backend
-    │
-    ├── docker-compose.yml            # 프로덕션 환경
-    ├── docker-compose.dev.yml        # 개발 환경 (hot-reload 포함)
-    ├── .env                          # 환경변수 (로컬 전용, Git 제외)
-    └── package.json                  # 루트 스크립트 (concurrently 기반)
+        개발자 Push/PR
+            │
+            ▼
+        GitHub Actions
+            │
+            ├─ Terraform fmt / validate / apply  # 인프라 구성/변경사항 반영
+
+            ├─ WEB Docker 이미지 빌드              # web, was 이미지 생성 병렬 구성
+            ├─ WEB /health 테스트
+            ├─ WAS Python 문법 검사
+            ├─ WAS Docker 이미지 빌드
+            ├─ WAS /health 테스트
+            
+            ├─ GitHub OIDC로 AWS 임시 인증         # pem 사용 x, OIDC 임시 인증서로 발급받아서 로그인
+            
+            ├─ WEB 이미지 ECR Push                # 이미지 푸시 -> 태그 수정(해시값,commit id등) -> CD 작동의 근거가됨
+            ├─ WAS 이미지 ECR Push
+            └─ ECR 이미지 등록 확인
 ```
+- devops_tf_k8s_ci 는 CI/CD 구성에서 `CI 영역만 담당하는 소스 저장소(source repository)` 임
 
----
-
-## 🛠️ 기술 스택
-
-### Frontend (`app/web`)
-
-| 항목 | 기술 |
-|------|------|
-| 프레임워크 | Next.js 15 (App Router) |
-| UI 라이브러리 | React 19 |
-| 스타일링 | Tailwind CSS v4 (`@tailwindcss/postcss`) |
-| 언어 | TypeScript 5.7 |
-| 패키지 매니저 | pnpm |
-
-### Backend (`app/was`)
-
-| 항목 | 기술 |
-|------|------|
-| 프레임워크 | Express 4 |
-| 언어 | TypeScript 5.7 (ESM) |
-| 유효성 검증 | Zod |
-| 보안 미들웨어 | Helmet, CORS |
-| 실행 도구 | tsx (개발), tsc + node (프로덕션) |
-
-### 인프라 & 외부 서비스
-
-| 항목 | 기술 |
-|------|------|
-| 컨테이너화 | Docker + Docker Compose |
-| AI 분석 | AWS Bedrock |
-| 게임 데이터 | Steam Web API |
-
----
-
-## 🚀 시작하기
-
-### 사전 요구사항
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) 또는 Docker Engine + Docker Compose
-- (로컬 직접 실행 시) Node.js 22+, pnpm
-
-### 1. 환경변수 설정
-
-`Steam_Insight_Dashboard/` 디렉토리에 `.env` 파일을 생성합니다.
-
-```env
-# Steam Web API Key (https://steamcommunity.com/dev/apikey)
-STEAM_API_KEY=your_steam_api_key_here
-
-# Backend
-PORT=4000
-CORS_ORIGIN=http://localhost:3000
-
-# Frontend
-NEXT_PUBLIC_API_URL=http://localhost:4000
-
-# AWS Bedrock API Key (선택)
-Bedrock_API_Key=your_bedrock_api_key_here
+# 프로젝트 구조
+```text
+        devops-tf-k8s-ci/
+        ├─ setup-ci.bat             # 신규 1회 수행 : Windows CI 전체 최초 설정
+        ├─ setup-ci.sh              # 신규 1회 수행 : macOS/Linux/WSL CI 전체 최초 설정
+        ├─ validate-ci.bat          # 신규 수시 수행 : Windows 로컬 CI 재검증 
+        ├─ validate-ci.sh           # 신규 수시 수행 : macOS/Linux/WSL 로컬 CI 재검증
+        ├─ project.bat              # 신규 인프라 구성시/변경되면 수행 : Windows 전체 명령 진입점
+        ├─ project.sh               # 신규 인프라 구성시/변경되면 수행 : macOS/Linux/WSL 전체 명령 진입점
+        ├─ .github/                 # 신규
+        │  ├─ workflows/ci.yml      # 신규 GitHub Actions CI Workflow
+        │  └─ dependabot.yml        # 신규 GitHub Actions 버전 점검
+        ├─ apps/
+        │  ├─ web/                  # Nginx 소스와 Dockerfile
+        │  └─ was/                  # FastAPI 소스와 Dockerfile
+        ├─ infra/
+        │  ├─ github-actions-ci.tf  # 신규 GitHub OIDC, CI IAM Role, ECR Push 정책
+        │  ├─ variables.tf          # 수정 CI 입력변수 추가 (OIDC, Git Action, Github 관련)
+        │  ├─ outputs.tf            # GitHub Actions Role ARN 출력 추가
+        │  └─ ...                   # 기존 인프라 구성 파일 동일
+        ├─ scripts/
+        │  ├─ ci/
+        │  │  ├─ verify_ci_config.py # CI 파일과 terraform.tfvars 사전 검사
+        │  │  ├─ linux/             # macOS/Linux/WSL CI 실행 로직
+        │  │  └─ windows/           # Windows CMD CI 실행 로직
+        │  ├─ deploy/               # 최초 수동 배포가 필요할 때 사용하는 로직
+        │  ├─ ops/                  # 상태 확인과 전체 삭제
+        │  └─ setup/                # 실습 환경 설치
+        ├─ tools/
+        └─ docs/
 ```
 
-> **⚠️ 주의:** `.env` 파일은 절대 Git에 커밋하지 마세요. `.gitignore`에 이미 포함되어 있습니다.
->
-> **ℹ️ 참고:** `STEAM_API_KEY`를 설정하지 않으면 Mock 데이터 모드로 동작합니다.
+- 전체 저장소 배치
+  ```
+    devops_tf_k8s/
+    L devops_tf_k8s_ci
+    L devops_tf_k8s_cd
+  ```
 
----
 
-### 2. Docker로 실행 (권장)
+# 세팅
+## OIDC 처리 (AWS 인증 방식 변경)
+- 절차
+  - 기존 : pem(엑세스키)
+  - 변경 : `OIDC`
+    - OIDC(OpenID Connect)는 ⁠OAuth 2.0 프로토콜을 바탕으로 만든 신원 인증 표준
+    - 절차 : Git Action에서 ECR에 Push할때 단기 AWS 자격인증 발급받아서 로그인 수행 -> 보안 이슈
+    - IAM 계정별 엑세스키(개발 PC는 사용), PEM 파일 (git 사용 x)
 
-#### 개발 환경 (Hot-reload 포함)
+- workflow
+```
+    GitHub Actions
+          │
+          │ OIDC Token 발급
+          ▼
+    GitHub OIDC Provider
+          │
+          │ sts:AssumeRoleWithWebIdentity
+          ▼
+    GitHub Actions CI IAM Role
+          │
+          │ ECR Push 권한
+          ▼
+    WEB ECR / WAS ECR
+```
 
+- 수정 및 추가작업
+  - infra/ 내 수정및 추가작업
+    - terraform.tfvars
+  - git 관련 id 조회
+    ```
+      # github_owner_id, github_ci_repository_id 값 획득
+      # gh 명령어 사용
+      # 설치
+        # 윈도우        
+          winget install --id GitHub.cli
+        # 맥        
+          brew install gh
+
+      # 공통
+        # 로그인
+        gh auth login
+        ---
+        GitHub.com
+        HTTPS
+        Login with a web browser
+        Press Enter to open https://github.com/login/device in your browser
+        로그인 수행 > continue > 발급퇸 키 8자리 붙여넣기 > continue
+        `Au... github` 버튼 클릭 > 설정완료
+
+      # ID 조회
+      gh api repos/ucoccto/devops_tf_k8s_ci --jq "{owner_id: .owner.id, repository_id: .id, created_at: .created_at}"
+      ---
+      {
+        "created_at": "2026-08-05T23:51:38Z",
+        "owner_id": 173376075,
+        "repository_id": 1324570033
+      }
+    ```
+
+## 전체 인프라 구성 및 최초 web/was 이미지 빌드 -> ECR Push : ci worlflow 진행
+- 최초 (인프라구성) / 수정된 인프라 배포
+```
+./project.sh deploy
+./project.bat deploy
+```
+
+- ci 셋업 1회 진행
+```
+./setup-ci.bat ucoccto/devops_tf_k8s_ci 
+./setup-ci.sh ucoccto/devops_tf_k8s_ci
+```
+
+
+
+- 오류 발생
+```
+## 🛠️ EKS / Terraform CI/CD 트러블슈팅 종합 리포트
+
+### 1. Terraform Resource Already Exists 충돌 (ECR / IAM)
+
+* **발생 에러:** `RepositoryAlreadyExistsException`, `EntityAlreadyExists`
+* **원인:** AWS상에 이미 동일한 이름의 ECR 리포지토리(`was`) 및 IAM OIDC Provider가 생성되어 있으나, 테라폼 상태 파일(`tfstate`)에 관리 대상으로 등록되지 않아 생성 시도 중 충돌 발생.
+* **해결 방법:** `terraform import` 명령어를 사용하여 기존 AWS 리소스를 테라폼 관리 상태로 가져와 동기화 수행.
 ```bash
-cd Steam_Insight_Dashboard
+terraform import aws_ecr_repository.was de-ai-07-eks-auto-dev/was
+terraform import 'aws_iam_openid_connect_provider.github_actions[0]' arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com
 
-# 빌드 및 실행
-docker compose -f docker-compose.dev.yml up -d --build
-
-# 또는 루트에서
-npm run docker:dev
 ```
 
-#### 프로덕션 환경
 
-```bash
-cd Steam_Insight_Dashboard
 
-docker compose up -d --build
+---
 
-# 또는 루트에서
-npm run docker:prod
+### 2. Kustomize 배포 배치 스크립트 경로 탐색 오류
+
+* **발생 에러:** `[ERROR] Kustomize file not found.`
+* **원인:** Windows 배치 스크립트 내 GitOps(CD) 레포지토리 경로 탐색 구문에서 상위 디렉토리 이동(`..\`) 누락 및 폴더명 불일치로 잘못된 중복 경로(`...\devops_tf_k8s_ci\devops_tf_k8s_cd\...`) 참조.
+* **해결 방법:** 배치 스크립트 내 `GITOPS_REPO_DIR` 설정 구문에 `..\`를 추가하고 실제 폴더명(`devops_tf_k8s_cd`)에 맞게 경로 수정.
+```cmd
+for %%I in ("%SOURCE_REPO_ROOT%\..\devops_tf_k8s_cd") do set "GITOPS_REPO_DIR=%%~fI"
+
 ```
 
-#### 종료
 
-```bash
-docker compose -f docker-compose.dev.yml down
 
-# 또는 루트에서
-npm run docker:down
+---
+
+### 3. K8s Service 매니페스트 Strict Decoding 오류
+
+* **발생 에러:** `unknown field "metadata.monitoring"`
+* **원인:** Service 매니페스트 파일 작성 중 Prometheus 모니터링 라벨/어노테이션 설정이 표준 필드가 아닌 `metadata` 최상위 들여쓰기 레벨에 잘못 기입됨.
+* **해결 방법:** `metadata.monitoring` 구문을 삭제하고, `metadata.labels` 하위에 `app: was`를 맞춰 인프라 표준 라벨링 구조 적용.
+
+---
+
+### 4. ALB 접속 연결 시간 초과 (ERR_TIMED_OUT)
+
+* **발생 에러:** 브라우저 접속 시 `ERR_TIMED_OUT` (응답 시간 초과)
+* **원인:** Ingress를 통해 생성된 AWS ALB의 보안 그룹(Security Group) 인바운드 규칙에 HTTP(80) 포트 접근 권한이 누락되었거나, ALB 연결 설정 문제로 외부 트래픽이 차단됨.
+* **해결 방법:** kubectl delete ingress public-alb -n de-ai-07 이 명령어 치고 다시 deploy 실행
+
+---
+
+### 5. ALB 백엔드 서비스 미발견 오류 (Backend service does not exist)
+
+* **발생 에러:** 브라우저 접속 시 `Backend service does not exist` 출력 (`<error: services "web" not found>`)
+* **원인:** Ingress 매니페스트의 백엔드 서비스 참조 이름(`name: web`)과 실제 Kubernetes에 생성된 Service 리소스의 이름(`metadata.name: web-service`) 불일치.
+* **해결 방법:** `ingress.yaml`의 백엔드 서비스 이름을 실제 Service 이름인 `web-service`로 수정 후 재배포.
+```yaml
+backend:
+  service:
+    name: web-service # web -> web-service 변경
+    port:
+      number: 80
+
 ```
-
----
-
-### 3. 로컬 직접 실행 (Docker 없이)
-
-```bash
-cd Steam_Insight_Dashboard
-
-# 의존성 설치
-npm install
-
-# 프론트엔드 + 백엔드 동시 실행
-npm run dev
-```
-
-개별 실행:
-
-```bash
-# 백엔드만
-npm run dev:backend   # http://localhost:4000
-
-# 프론트엔드만
-npm run dev:frontend  # http://localhost:3000
-```
-
----
-
-## 🌐 서비스 엔드포인트
-
-### Frontend
-
-| 주소 | 설명 |
-|------|------|
-| `http://localhost:3000` | 메인 대시보드 |
-
-### Backend API
-
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| `GET` | `/health` | 서버 헬스체크 (Docker healthcheck 용) |
-| `GET` | `/api/steam/profile?q={steamId}` | Steam 유저 프로필 조회 |
-| `GET` | `/api/trends/global` | 글로벌 게임 트렌드 조회 |
-| `GET` | `/api/influencers` | 인플루언서 목록 조회 |
-
----
-
-## ⚙️ 주요 스크립트
-
-`Steam_Insight_Dashboard/package.json` 기준:
-
-| 커맨드 | 설명 |
-|--------|------|
-| `npm run dev` | 프론트엔드 + 백엔드 동시 실행 |
-| `npm run dev:frontend` | 프론트엔드만 실행 |
-| `npm run dev:backend` | 백엔드만 실행 |
-| `npm run build` | 프론트엔드 + 백엔드 빌드 |
-| `npm run docker:dev` | 개발용 Docker Compose 실행 |
-| `npm run docker:prod` | 프로덕션용 Docker Compose 실행 |
-| `npm run docker:down` | Docker Compose 종료 |
-
----
-
-## 🔒 보안 정책
-
-- Steam API를 통해 **공개(public)** 프로필 데이터만 조회합니다.
-- 비공개 프로필 정보는 조회·저장하지 않습니다.
-- 브라우저를 닫거나 새 검색 실행 시 분석 기준 유저가 초기화됩니다 (서버 저장 없음).
-- `STEAM_API_KEY`가 없으면 자동으로 **Mock 모드**로 전환됩니다.
-
----
-
-## 🚨 Git 관리 주의사항 (`.pnpm-store` 문제)
-
-현재 `app/web/.pnpm-store/` 디렉토리(pnpm 로컬 패키지 캐시)가 Git에 이미 추적되어 있어 **10,000개 이상의 변경/미추적 파일**이 표시됩니다.
-
-이를 해결하려면 아래 명령어를 실행하세요:
-
-```bash
-# 1. .gitignore에 추가 (이미 되어 있으면 생략)
-echo "**/.pnpm-store/" >> .gitignore
-
-# 2. Git 추적 캐시에서 제거 (파일 자체는 삭제되지 않음)
-git rm -r --cached Steam_Insight_Dashboard/app/web/.pnpm-store/
-
-# 3. 커밋
-git add .gitignore
-git commit -m "Fix: .pnpm-store를 git 추적에서 제거"
-```
-
-> **⚠️ 절대 `.pnpm-store/`를 커밋하지 마세요.** 이 디렉토리는 pnpm이 자동으로 관리하는 로컬 캐시이며, 수만 개의 바이너리 파일을 포함합니다.
-
----
-
-## 📝 개발 현황
-
-| 기능 | 상태 |
-|------|------|
-| Steam 프로필 검색 UI | ✅ 완료 |
-| 글로벌 트렌드 UI | ✅ 완료 |
-| 친구 네트워크 UI | ✅ 완료 |
-| Docker 개발 환경 | ✅ 완료 |
-| Steam API 실제 연동 | 🔧 개발 중 (현재 Mock 모드) |
-| AWS Bedrock AI 분석 | 🔧 개발 중 |
-| Steam Store API (할인·뉴스) | 📋 예정 |
-| 인증 / 유저 저장 | 📋 예정 |
-
----
-
-## 🤝 기여 방법
-
-1. 이 저장소를 Fork합니다.
-2. Feature 브랜치를 생성합니다: `git checkout -b feat/기능명`
-3. 변경사항을 커밋합니다: `git commit -m "Feat: 기능 설명"`
-4. 브랜치에 Push합니다: `git push origin feat/기능명`
-5. Pull Request를 생성합니다.
-
----
-
-## 📄 라이선스
-
-이 프로젝트는 팀 내부 프로젝트로 운영됩니다. 외부 배포 시 별도 라이선스 정책을 적용합니다.
-
----
-
-> 스인싸는 Steam에서 공개된 데이터를 조회 시점에 분석합니다. 비공개 정보는 조회·저장하지 않습니다.

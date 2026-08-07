@@ -1,0 +1,289 @@
+name: Application CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/**"
+      - "infra/**"
+      - "scripts/ci/**"
+      - ".github/workflows/ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/**"
+      - "infra/**"
+      - "scripts/ci/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+# 같은 Branch에서 CI가 중복 실행되면 이전 실행을 취소한다.
+concurrency:
+  group: application-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate source and infrastructure
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout tf-k8s-ci
+        uses: actions/checkout@v7
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Validate Terraform and application containers
+        run: bash scripts/ci/linux/validate.sh
+
+  build-and-push:
+    name: Build and push ${{ matrix.app }}
+    needs: validate
+
+    # Pull Request는 검증까지만 수행하고 ECR에는 Push하지 않는다.
+    if: github.event_name != 'pull_request'
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [web, was]
+
+    steps:
+      - name: Checkout tf-k8s-ci
+        uses: actions/checkout@v7
+
+      - name: Check required GitHub variables
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          ECR_WEB_REPOSITORY: ${{ vars.ECR_WEB_REPOSITORY }}
+          ECR_WAS_REPOSITORY: ${{ vars.ECR_WAS_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          for variable_name in AWS_REGION AWS_ROLE_ARN ECR_WEB_REPOSITORY ECR_WAS_REPOSITORY; do
+            if [ -z "${!variable_name:-}" ]; then
+              echo "[ERROR] GitHub Repository variable가 없습니다: ${variable_name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Configure temporary AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: tf-k8s-ci-${{ github.run_id }}-${{ matrix.app }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image metadata
+        id: image
+        env:
+          APP_NAME: ${{ matrix.app }}
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          ECR_WEB_REPOSITORY: ${{ vars.ECR_WEB_REPOSITORY }}
+          ECR_WAS_REPOSITORY: ${{ vars.ECR_WAS_REPOSITORY }}
+        run: |
+          set -euo pipefail
+
+          IMAGE_TAG="${GITHUB_SHA::12}"
+
+          case "$APP_NAME" in
+            web) REPOSITORY="$ECR_WEB_REPOSITORY" ;;
+            was) REPOSITORY="$ECR_WAS_REPOSITORY" ;;
+            *)
+              echo "[ERROR] 지원하지 않는 앱입니다: $APP_NAME" >&2
+              exit 1
+              ;;
+          esac
+
+          IMAGE_URI="${ECR_REGISTRY}/${REPOSITORY}"
+
+          echo "tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+          echo "sha_image=${IMAGE_URI}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "latest_image=${IMAGE_URI}:dev-latest" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./apps/${{ matrix.app }}
+          file: ./apps/${{ matrix.app }}/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image.outputs.sha_image }}
+            ${{ steps.image.outputs.latest_image }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.image.outputs.tag }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Verify image in ECR
+        env:
+          APP_NAME: ${{ matrix.app }}
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          ECR_WEB_REPOSITORY: ${{ vars.ECR_WEB_REPOSITORY }}
+          ECR_WAS_REPOSITORY: ${{ vars.ECR_WAS_REPOSITORY }}
+        run: |
+          set -euo pipefail
+
+          if [ "$APP_NAME" = "web" ]; then
+            REPOSITORY="$ECR_WEB_REPOSITORY"
+          else
+            REPOSITORY="$ECR_WAS_REPOSITORY"
+          fi
+
+          aws ecr describe-images \
+            --repository-name "$REPOSITORY" \
+            --image-ids imageTag="$IMAGE_TAG" \
+            --region "${{ vars.AWS_REGION }}" \
+            --query 'imageDetails[0].{Digest:imageDigest,PushedAt:imagePushedAt,Tags:imageTags}'
+
+      - name: Write job summary
+        run: |
+          {
+            echo "## ${{ matrix.app }} CI 완료"
+            echo
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Image: \`${{ steps.image.outputs.sha_image }}\`"
+            echo "- Moving tag: \`${{ steps.image.outputs.latest_image }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+  
+  update-cd:
+    name: Update tf-k8s-cd image tags
+    needs: build-and-push
+
+    if: github.event_name != 'pull_request'
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check CD settings
+        env:
+          CD_REPOSITORY: ${{ vars.CD_REPOSITORY }}
+          CD_REPOSITORY_TOKEN: ${{ secrets.CD_REPOSITORY_TOKEN }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          ECR_WEB_REPOSITORY: ${{ vars.ECR_WEB_REPOSITORY }}
+          ECR_WAS_REPOSITORY: ${{ vars.ECR_WAS_REPOSITORY }}
+        run: |
+          set -euo pipefail
+
+          for variable_name in \
+            CD_REPOSITORY \
+            CD_REPOSITORY_TOKEN \
+            AWS_REGION \
+            AWS_ROLE_ARN \
+            ECR_WEB_REPOSITORY \
+            ECR_WAS_REPOSITORY
+          do
+            if [ -z "${!variable_name:-}" ]; then
+              echo "[ERROR] CD 연결 설정이 없습니다: ${variable_name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Configure temporary AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: tf-k8s-ci-${{ github.run_id }}-update-cd
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Checkout tf-k8s-cd
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ vars.CD_REPOSITORY }}
+          token: ${{ secrets.CD_REPOSITORY_TOKEN }}
+          ref: main
+          path: tf-k8s-cd
+
+      - name: Install Kustomize
+        env:
+          KUSTOMIZE_VERSION: v5.8.1
+        run: |
+          set -euo pipefail
+
+          curl -fsSL \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" \
+            -o /tmp/kustomize.tar.gz
+
+          tar -xzf /tmp/kustomize.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/kustomize /usr/local/bin/kustomize
+          kustomize version
+
+      - name: Update immutable image tags
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          ECR_WEB_REPOSITORY: ${{ vars.ECR_WEB_REPOSITORY }}
+          ECR_WAS_REPOSITORY: ${{ vars.ECR_WAS_REPOSITORY }}
+        run: |
+          set -euo pipefail
+
+          IMAGE_TAG="${GITHUB_SHA::12}"
+          AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          WEB_IMAGE="${ECR_REGISTRY}/${ECR_WEB_REPOSITORY}"
+          WAS_IMAGE="${ECR_REGISTRY}/${ECR_WAS_REPOSITORY}"
+
+          cd tf-k8s-cd/k8s/overlays/dev
+
+          kustomize edit set image \
+            "WEB_IMAGE=${WEB_IMAGE}:${IMAGE_TAG}" \
+            "WAS_IMAGE=${WAS_IMAGE}:${IMAGE_TAG}"
+
+          kustomize build . > /tmp/de-ai-25.yaml
+          test -s /tmp/de-ai-25.yaml
+
+      - name: Commit and push CD change
+        working-directory: tf-k8s-cd
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add k8s/overlays/dev/kustomization.yaml
+
+          if git diff --cached --quiet; then
+            echo "CD Manifest에 변경 사항이 없습니다."
+            exit 0
+          fi
+
+          git commit -m "deploy(dev): ${GITHUB_SHA::12}"
+          git push origin main
+
+      - name: Write CD summary
+        run: |
+          {
+            echo "## CD 저장소 갱신 완료"
+            echo
+            echo "- CD repository: \`${{ vars.CD_REPOSITORY }}\`"
+            echo "- Image tag: \`${GITHUB_SHA::12}\`"
+            echo "- Argo CD가 main Branch 변경을 감지해 자동 배포합니다."
+          } >> "${GITHUB_STEP_SUMMARY}"

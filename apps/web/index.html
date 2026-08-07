@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>스인싸 - Steam 인사이트 플랫폼</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap"
+    rel="stylesheet" />
+  <style>
+    :root {
+      --bg-color: #090c12;
+      --card-bg: #10151f;
+      --nav-bg: rgba(16, 20, 29, 0.9);
+      --footer-bg: #0d1118;
+      --border-color: rgba(255, 255, 255, 0.1);
+      --border-cyan: rgba(45, 212, 191, 0.3);
+      --cyan-bright: #67e8f9;
+      --cyan-btn: #1b9aaa;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent-green: #34d399;
+      --accent-rose: #fb7185;
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+      position: relative;
+    }
+
+    /* Grid background effect */
+    .bg-grid {
+      position: fixed;
+      inset: 0;
+      z-index: -10;
+      opacity: 0.6;
+      background-image:
+        linear-gradient(rgba(92, 122, 143, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(92, 122, 143, 0.07) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+    }
+
+    /* Navigation */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: var(--nav-bg);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .nav-container {
+      max-width: 1480px;
+      margin: 0 auto;
+      height: 76px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 24px;
+    }
+
+    .brand-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+    }
+
+    .brand-logo {
+      height: 70px;
+      width: auto;
+      object-fit: contain;
+    }
+
+    .divider {
+      height: 28px;
+      width: 1px;
+      background-color: var(--border-color);
+    }
+
+    .nav-links {
+      display: flex;
+      height: 100%;
+      gap: 4px;
+      overflow-x: auto;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 16px;
+      height: 100%;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .nav-item:hover {
+      color: var(--text-main);
+    }
+
+    .nav-item.active {
+      color: #fff;
+      border-bottom-color: var(--cyan-bright);
+    }
+
+    .nav-status {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background-color: var(--accent-green);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.4;
+        transform: scale(0.85);
+      }
+    }
+
+    /* Main Container */
+    main {
+      flex: 1;
+      width: 100%;
+    }
+
+    .page-section {
+      display: none;
+    }
+
+    .page-section.active {
+      display: block;
+    }
+
+    .container-search {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 56px 20px 80px;
+    }
+
+    .container-wide {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 40px 24px 60px;
+    }
+
+    /* Search Hero */
+    .hero-box {
+      text-align: center;
+      transition: min-height 0.3s;
+    }
+
+    .hero-box.centered {
+      min-height: calc(100vh - 260px);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .tag-label {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.2em;
+      color: var(--cyan-bright);
+      margin-bottom: 16px;
+      text-transform: uppercase;
+    }
+
+    .hero-headline {
+      font-size: 44px;
+      font-weight: 900;
+      line-height: 1.1;
+    }
+
+    @media (min-width: 640px) {
+      .hero-headline {
+        font-size: 60px;
+      }
+    }
+
+    .hero-headline span {
+      color: var(--cyan-bright);
+    }
+
+    .hero-desc {
+      margin: 20px auto 0;
+      max-width: 580px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text-muted);
+    }
+
+    /* Form */
+    .search-form {
+      margin: 28px auto 0;
+      max-width: 640px;
+      display: flex;
+      border: 1px solid rgba(103, 232, 249, 0.4);
+      background: #111923;
+      padding: 4px;
+      box-shadow: 0 0 50px rgba(27, 154, 170, 0.15);
+    }
+
+    .search-input-wrapper {
+      display: flex;
+      flex: 1;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      color: var(--text-dim);
+    }
+
+    .search-input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      outline: none;
+      padding: 12px 0;
+      font-size: 14px;
+      color: #fff;
+      font-family: inherit;
+    }
+
+    .search-btn {
+      background-color: var(--cyan-btn);
+      border: none;
+      padding: 0 24px;
+      font-size: 14px;
+      font-weight: 900;
+      color: #061215;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .search-btn:hover {
+      background-color: #22b5c7;
+    }
+
+    .search-subtext {
+      margin-top: 12px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    /* Profile Card */
+    .profile-card {
+      margin-top: 48px;
+      border: 1px solid rgba(103, 232, 249, 0.25);
+      background: var(--card-bg);
+    }
+
+    .profile-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 16px;
+      border-bottom: 1px solid var(--border-color);
+      padding: 24px;
+    }
+
+    .avatar-circle {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #22d3ee, #4338ca);
+      display: grid;
+      place-items: center;
+      font-size: 18px;
+      font-weight: 900;
+      color: #fff;
+    }
+
+    .profile-info {
+      margin-right: auto;
+    }
+
+    .profile-info h2 {
+      font-size: 24px;
+      font-weight: 900;
+      margin-top: 4px;
+    }
+
+    .profile-info p {
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    .badge-updated {
+      border: 1px solid rgba(52, 211, 153, 0.3);
+      padding: 4px 12px;
+      font-size: 12px;
+      color: var(--accent-green);
+    }
+
+    .metrics-grid {
+      display: grid;
+      gap: 1px;
+      background: var(--border-color);
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    @media (min-width: 640px) {
+      .metrics-grid {
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+
+    .metric-item {
+      background: var(--card-bg);
+      padding: 20px;
+    }
+
+    .metric-val {
+      font-family: var(--font-mono);
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .metric-lbl {
+      margin-top: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: var(--text-dim);
+    }
+
+    .profile-body {
+      display: grid;
+      gap: 20px;
+      padding: 28px;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 1024px) {
+      .profile-body {
+        grid-template-columns: 1.1fr 0.9fr;
+      }
+    }
+
+    .insight-box h3 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-top: 8px;
+    }
+
+    .insight-box p {
+      margin-top: 12px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text-muted);
+    }
+
+    .discovery-btn {
+      border: 1px solid rgba(103, 232, 249, 0.4);
+      background: rgba(103, 232, 249, 0.06);
+      padding: 20px;
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: inherit;
+    }
+
+    .discovery-btn:hover {
+      background: var(--cyan-bright);
+      color: #0f172a;
+    }
+
+    .discovery-btn:hover .tag-label {
+      color: #0f172a;
+    }
+
+    .discovery-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .discovery-title {
+      display: block;
+      margin-top: 12px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .discovery-sub {
+      display: block;
+      margin-top: 12px;
+      font-size: 12px;
+      opacity: 0.7;
+    }
+
+    /* Friends Page */
+    .friends-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .friends-header h1 {
+      font-size: 30px;
+      font-weight: 900;
+      margin-top: 8px;
+    }
+
+    .stats-badge {
+      border: 1px solid var(--border-color);
+      padding: 12px 16px;
+      text-align: right;
+      font-size: 12px;
+    }
+
+    .stats-badge-val {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: 18px;
+      color: var(--cyan-bright);
+    }
+
+    .tabs-bar {
+      margin-top: 32px;
+      display: flex;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .tab-item {
+      padding: 16px 20px;
+      font-size: 14px;
+      font-weight: 700;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .tab-item:hover {
+      color: var(--text-main);
+    }
+
+    .tab-item.active {
+      border-bottom-color: var(--cyan-bright);
+      color: var(--cyan-bright);
+    }
+
+    .friends-content {
+      margin-top: 24px;
+      display: grid;
+      gap: 24px;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 1280px) {
+      .friends-content {
+        grid-template-columns: minmax(0, 1fr) 370px;
+      }
+    }
+
+    .friends-list-box {
+      border: 1px solid var(--border-color);
+      background: var(--card-bg);
+      overflow: hidden;
+    }
+
+    .box-header {
+      border-bottom: 1px solid var(--border-color);
+      padding: 16px 20px;
+    }
+
+    .friend-row {
+      display: flex;
+      width: 100%;
+      align-items: center;
+      gap: 16px;
+      border: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      background: transparent;
+      padding: 16px 20px;
+      color: var(--text-main);
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .friend-row:hover {
+      background: rgba(103, 232, 249, 0.06);
+    }
+
+    .friend-row.selected {
+      background: rgba(103, 232, 249, 0.12);
+    }
+
+    .friend-rank {
+      font-family: var(--font-mono);
+      color: var(--cyan-bright);
+      font-weight: 700;
+    }
+
+    .friend-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #06b6d4, #3730a3);
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .friend-details {
+      margin-right: auto;
+    }
+
+    .friend-name {
+      display: block;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .friend-sub {
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    .friend-stat {
+      text-align: right;
+    }
+
+    .friend-stat-val {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .friend-stat-lbl {
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+    }
+
+    .side-card {
+      border: 1px solid rgba(103, 232, 249, 0.2);
+      background: var(--card-bg);
+      padding: 20px;
+    }
+
+    .side-card h2 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-top: 12px;
+      line-height: 1.5;
+    }
+
+    .side-card p {
+      margin-top: 12px;
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .side-card-foot {
+      margin-top: 20px;
+      border-top: 1px solid var(--border-color);
+      padding-top: 16px;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    /* Friend Detail Card */
+    .friend-detail-section {
+      margin-top: 24px;
+      border: 1px solid var(--border-color);
+      background: var(--card-bg);
+    }
+
+    .friend-detail-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 1024px) {
+      .friend-detail-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    .detail-col {
+      padding: 20px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    @media (min-width: 1024px) {
+      .detail-col {
+        border-bottom: none;
+        border-right: 1px solid var(--border-color);
+      }
+
+      .detail-col:last-child {
+        border-right: none;
+      }
+    }
+
+    .re-search-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid rgba(103, 232, 249, 0.4);
+      background: transparent;
+      color: var(--cyan-bright);
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .re-search-btn:hover {
+      background: var(--cyan-bright);
+      color: #090c12;
+    }
+
+    .shared-badge-container {
+      margin-top: 16px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .game-badge {
+      border: 1px solid var(--border-color);
+      padding: 4px 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .recent-game-item {
+      display: flex;
+      justify-content: space-between;
+      background: rgba(255, 255, 255, 0.035);
+      padding: 8px 12px;
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    /* Global Trends Page */
+    .trends-grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 640px) {
+      .trends-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .trend-card {
+      border: 1px solid var(--border-color);
+      background: var(--card-bg);
+      padding: 20px;
+      transition: border-color 0.2s;
+    }
+
+    .trend-card:hover {
+      border-color: rgba(103, 232, 249, 0.6);
+    }
+
+    .trend-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .trend-change-up {
+      color: var(--accent-green);
+      font-size: 12px;
+    }
+
+    .trend-change-down {
+      color: var(--accent-rose);
+      font-size: 12px;
+    }
+
+    .trend-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin-top: 16px;
+    }
+
+    .trend-genre {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    .trend-footer {
+      margin-top: 20px;
+      border-top: 1px solid var(--border-color);
+      padding-top: 12px;
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+
+    .trend-discount {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--cyan-bright);
+    }
+
+    .empty-state {
+      margin-top: 32px;
+      border: 1px dashed rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.025);
+      padding: 48px;
+      text-align: center;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border-color);
+      background: var(--footer-bg);
+      padding: 28px 20px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    /* Icons */
+    .icon-svg {
+      display: inline-block;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="bg-grid"></div>
+
+  <!-- Header Navigation -->
+  <nav>
+    <div class="nav-container">
+      <button class="brand-btn" id="logoBtn" aria-label="스인싸 홈">
+        <img src="./assets/Copilot_20260803_100331-1.png" alt="스인싸" class="brand-logo" />
+      </button>
+      <div class="divider"></div>
+      <div class="nav-links">
+        <button class="nav-item active" data-page="search">
+          <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10" />
+          </svg>
+          유저 검색
+        </button>
+        <button class="nav-item" data-page="global">
+          <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19V9m5 10V5m5 14v-7m5 7V3" />
+          </svg>
+          글로벌 트렌드
+        </button>
+        <button class="nav-item" data-page="friends">
+          <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path
+              d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87" />
+          </svg>
+          친구 정보
+        </button>
+      </div>
+      <div class="nav-status">
+        <span class="status-dot"></span>
+        <span id="navStatusText">PUBLIC DATA ONLY</span>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <!-- PAGE 1: SEARCH PAGE -->
+    <section id="page-search" class="page-section active">
+      <div class="container-search">
+        <div id="heroBox" class="hero-box centered">
+          <p class="tag-label">STEAM PROFILE INTELLIGENCE / 01</p>
+          <h1 class="hero-headline">한 사람의 Steam,<br /><span>플레이 취향</span>을 읽다.</h1>
+          <p class="hero-desc">Steam ID 또는 공개 프로필 URL로 공개된 게임 활동과 친구 네트워크를 분석합니다.</p>
+
+          <form id="searchForm" class="search-form">
+            <div class="search-input-wrapper">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="m21 21-4.4-4.4M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14" />
+              </svg>
+              <input type="text" id="searchInput" class="search-input" placeholder="Steam ID, 프로필 URL, 커스텀 ID" />
+            </div>
+            <button type="submit" id="searchSubmitBtn" class="search-btn">분석하기</button>
+          </form>
+          <p class="search-subtext">검색을 실행할 때마다 API 조회 기준이 새로 갱신됩니다.</p>
+        </div>
+
+        <!-- User Profile Result (Hidden by default, revealed after search) -->
+        <div id="profileSection" class="profile-card" style="display: none;">
+          <div class="profile-header">
+            <div id="profileAvatar" class="avatar-circle">GA</div>
+            <div class="profile-info">
+              <p class="tag-label">PUBLIC PROFILE · LIVE QUERY</p>
+              <h2 id="profileUsername">Gaben</h2>
+              <p>Korea, Republic of · Level 47 · 공개 프로필</p>
+            </div>
+            <span class="badge-updated" id="badgeUpdated">조회 갱신 완료</span>
+          </div>
+
+          <div class="metrics-grid">
+            <div class="metric-item">
+              <div class="metric-val" id="metricGames">247</div>
+              <div class="metric-lbl">보유 게임</div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-val" id="metricHours">1,842h</div>
+              <div class="metric-lbl">누적 플레이</div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-val" id="metricAchievements">68%</div>
+              <div class="metric-lbl">업적 달성률</div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-val" id="metricFriends">184명</div>
+              <div class="metric-lbl">공개 친구</div>
+            </div>
+          </div>
+
+          <div class="profile-body">
+            <div class="insight-box">
+              <p class="tag-label">PLAYER INSIGHT</p>
+              <h3 id="insightTitle">탐험형 협동 플레이어</h3>
+              <p id="insightDesc">전략·생존 장르를 중심으로 오래 플레이하며, 최근에는 친구와 즐기는 협동 게임 비중이 높아졌습니다.</p>
+            </div>
+            <button id="goToFriendsBtn" class="discovery-btn">
+              <div class="discovery-head">
+                <span class="tag-label">FRIEND DISCOVERY</span>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </div>
+              <strong class="discovery-title">공개 친구 184명의<br />플레이 인사이트 보기</strong>
+              <small class="discovery-sub">최근 활동·누적 플레이·함께 할 게임 기준</small>
+            </button>
+          </div>
+        </div>
+
+        <div
+          style="margin-top: 40px; border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); padding: 20px 0; text-align: center; font-size: 12px; color: var(--text-dim);">
+          공개 프로필·게임 상세·친구 목록이 열려 있는 범위에서만 분석합니다. 비공개 정보는 조회·저장하지 않습니다.
+        </div>
+      </div>
+    </section>
+
+    <!-- PAGE 2: FRIENDS PAGE -->
+    <section id="page-friends" class="page-section">
+      <div class="container-wide">
+        <header class="friends-header">
+          <div>
+            <p class="tag-label">FRIEND NETWORK DISCOVERY / 03</p>
+            <h1>친구 정보</h1>
+            <p id="friendsSubtitle" style="margin-top: 8px; font-size: 14px; color: var(--text-muted);">
+              먼저 유저를 검색하면 해당 유저의 공개 친구 인사이트를 확인할 수 있습니다.
+            </p>
+          </div>
+          <div id="friendsBadge" class="stats-badge" style="display: none;">
+            <span class="stats-badge-val">184 / 82</span>
+            <span style="color: var(--text-dim);">공개 친구 / 활동 분석 가능</span>
+          </div>
+        </header>
+
+        <!-- Empty State when no user searched -->
+        <div id="friendsEmptyState" class="empty-state">
+          <p style="font-size: 14px; color: var(--text-muted);">친구 네트워크를 분석할 기준 유저가 없습니다.</p>
+          <p style="font-size: 12px; color: var(--text-dim); margin-top: 8px;">유저 검색 탭에서 Steam ID 또는 공개 프로필 URL을 입력해
+            주세요.</p>
+        </div>
+
+        <!-- Main Content when user active -->
+        <div id="friendsActiveContent" style="display: none;">
+          <div class="tabs-bar">
+            <button class="tab-item active" data-friend-tab="recent">최근 2주 <span
+                style="font-family: var(--font-mono); font-size: 10px; opacity: 0.6;">TOP 5</span></button>
+            <button class="tab-item" data-friend-tab="total">누적 플레이 <span
+                style="font-family: var(--font-mono); font-size: 10px; opacity: 0.6;">TOP 5</span></button>
+            <button class="tab-item" data-friend-tab="shared">함께 할 게임 <span
+                style="font-family: var(--font-mono); font-size: 10px; opacity: 0.6;">TOP 5</span></button>
+            <button class="tab-item" data-friend-tab="achieve">업적 <span
+                style="font-family: var(--font-mono); font-size: 10px; opacity: 0.6;">TOP 5</span></button>
+          </div>
+
+          <div class="friends-content">
+            <section class="friends-list-box">
+              <div class="box-header">
+                <p class="tag-label" id="friendsTabTag">RECENT 2 WEEKS · SELECTED FRIENDS</p>
+                <h2 id="friendsTabTitle" style="font-size: 16px; font-weight: 700; margin-top: 4px;">최근 2주 가장 오래 플레이한 친구
+                </h2>
+              </div>
+              <div id="friendsListContainer"></div>
+            </section>
+
+            <aside class="side-card">
+              <p class="tag-label">NETWORK SIGNAL</p>
+              <h2>친구 네트워크는 협동·생존 게임에 더 오래 머물고 있습니다.</h2>
+              <p>전 세계 인기 순위와 별개로, 친구들의 실제 최근 플레이를 기준으로 다음 게임을 발견하세요.</p>
+              <div class="side-card-foot">조회 기준 · 현재 검색한 프로필의 공개 친구</div>
+            </aside>
+          </div>
+
+          <!-- Selected Friend Detail -->
+          <div id="friendDetailCard" class="friend-detail-section">
+            <div class="profile-header">
+              <div id="detailAvatar" class="avatar-circle">AN</div>
+              <div class="profile-info">
+                <p class="tag-label">FRIEND PROFILE INSIGHT</p>
+                <h2 id="detailName">Anomaly</h2>
+                <p id="detailSubInfo">Gaben님의 공개 친구 · Sweden</p>
+              </div>
+              <button id="reSearchBtn" class="re-search-btn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 9h10v10H9zM5 15H4V5h10v1" />
+                </svg>
+                이 유저로 다시 검색
+              </button>
+            </div>
+
+            <div class="friend-detail-grid">
+              <div class="detail-col">
+                <p class="tag-label" style="color: var(--text-dim);">PLAYSTYLE</p>
+                <h3 id="detailTrait" style="font-size: 16px; font-weight: 700; margin-top: 12px; line-height: 1.5;">경쟁
+                  FPS와 협동 공포를 오가는 하이브리드 플레이어</h3>
+                <p id="detailTimes"
+                  style="margin-top: 16px; border-left: 2px solid var(--cyan-bright); padding-left: 12px; font-size: 14px; color: var(--text-muted);">
+                  최근 2주 46.8h · 누적 6,842h</p>
+              </div>
+              <div class="detail-col">
+                <p class="tag-label" style="color: var(--text-dim);">YOU TWO</p>
+                <b id="detailShared"
+                  style="display: block; font-family: var(--font-mono); font-size: 28px; color: var(--cyan-bright); margin-top: 12px;">18개</b>
+                <p style="font-size: 14px; color: var(--text-muted);">함께 보유한 게임</p>
+                <div class="shared-badge-container">
+                  <span class="game-badge">Deep Rock Galactic</span>
+                  <span class="game-badge">Rust</span>
+                </div>
+              </div>
+              <div class="detail-col">
+                <p class="tag-label" style="color: var(--text-dim);">RECENTLY PLAYED</p>
+                <div id="detailRecentGames" style="margin-top: 12px;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PAGE 3: GLOBAL TRENDS PAGE -->
+    <section id="page-global" class="page-section">
+      <div class="container-wide">
+        <p class="tag-label">GLOBAL GAME INTELLIGENCE / 02</p>
+        <h1 style="font-size: 30px; font-weight: 900; margin-top: 8px;">글로벌 트렌드</h1>
+        <p style="margin-top: 8px; font-size: 14px; color: var(--text-muted);">주요 Steam 게임의 공개 지표와 뉴스·패치 신호를 한곳에서 탐색하세요.
+        </p>
+
+        <div class="tabs-bar" style="margin-top: 28px;">
+          <button class="tab-item active">개요</button>
+          <button class="tab-item">인기순</button>
+          <button class="tab-item">할인순</button>
+          <button class="tab-item">급상승</button>
+          <button class="tab-item">카테고리</button>
+          <button class="tab-item">뉴스 · 패치</button>
+        </div>
+
+        <div class="friends-content">
+          <div class="trends-grid" id="trendsGrid"></div>
+
+          <aside class="side-card">
+            <p class="tag-label">OVERVIEW SIGNAL</p>
+            <h2>패치와 할인 이후, 협동 게임의 활동 신호가 뚜렷합니다.</h2>
+            <p id="globalSignalDesc">유저를 검색하면 친구 네트워크와 글로벌 흐름을 함께 비교할 수 있습니다.</p>
+            <div class="side-card-foot">Steam 공개 API · 조회 시점 기준</div>
+          </aside>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    스인싸는 Steam에서 공개된 데이터를 조회 시점에 분석합니다. 브라우저를 닫거나 새 검색을 실행하면 분석 기준 유저는 초기화됩니다.
+  </footer>
+
+  <!-- Vanilla JavaScript App Logic -->
+  <script>
+    // State management
+    const state = {
+      currentPage: 'search',
+      activeUser: null,
+      selectedFriendIndex: 0,
+      activeFriendTab: 'recent'
+    };
+
+    // Static Data
+    const friendsData = [
+      { name: "Anomaly", code: "AN", country: "Sweden", twoWeeks: "46.8h", total: "6,842h", game: "Counter-Strike 2", shared: "18개", trait: "경쟁 FPS와 협동 공포를 오가는 하이브리드 플레이어" },
+      { name: "shroud", code: "SH", country: "Canada", twoWeeks: "39.1h", total: "5,919h", game: "Escape from Tarkov", shared: "11개", trait: "새로운 슈팅 게임의 메타를 빠르게 탐색하는 정밀 플레이어" },
+      { name: "S1mple", code: "S1", country: "Ukraine", twoWeeks: "31.6h", total: "7,086h", game: "Dota 2", shared: "24개", trait: "경쟁 게임과 장기 몰입형 RPG를 함께 즐기는 집중형 플레이어" },
+      { name: "Ninja", code: "NI", country: "United States", twoWeeks: "26.4h", total: "4,438h", game: "Helldivers 2", shared: "8개", trait: "커뮤니티와 함께 신작을 찾아가는 트렌드 탐색가" },
+      { name: "Pokelawls", code: "PL", country: "Canada", twoWeeks: "21.8h", total: "3,926h", game: "Rust", shared: "15개", trait: "생존 장르와 자유도 높은 샌드박스에 오래 머무는 탐험가" }
+    ];
+
+    const trendGames = [
+      { name: "Counter-Strike 2", genre: "FPS", active: "1,418,229", change: "+12.4%", isUp: true, discount: "—" },
+      { name: "PUBG: BATTLEGROUNDS", genre: "BATTLE ROYALE", active: "644,938", change: "+9.1%", isUp: true, discount: "-60%" },
+      { name: "Dota 2", genre: "MOBA", active: "712,451", change: "+5.8%", isUp: true, discount: "—" },
+      { name: "Rust", genre: "SURVIVAL", active: "159,082", change: "-3.2%", isUp: false, discount: "-33%" }
+    ];
+
+    // DOM Elements
+    const navItems = document.querySelectorAll('.nav-item');
+    const logoBtn = document.getElementById('logoBtn');
+    const navStatusText = document.getElementById('navStatusText');
+    const pageSections = document.querySelectorAll('.page-section');
+
+    const searchForm = document.getElementById('searchForm');
+    const searchInput = document.getElementById('searchInput');
+    const heroBox = document.getElementById('heroBox');
+    const profileSection = document.getElementById('profileSection');
+    const profileAvatar = document.getElementById('profileAvatar');
+    const profileUsername = document.getElementById('profileUsername');
+    const goToFriendsBtn = document.getElementById('goToFriendsBtn');
+
+    const friendsSubtitle = document.getElementById('friendsSubtitle');
+    const friendsBadge = document.getElementById('friendsBadge');
+    const friendsEmptyState = document.getElementById('friendsEmptyState');
+    const friendsActiveContent = document.getElementById('friendsActiveContent');
+    const friendsListContainer = document.getElementById('friendsListContainer');
+    const friendsTabTag = document.getElementById('friendsTabTag');
+    const friendsTabTitle = document.getElementById('friendsTabTitle');
+
+    const detailAvatar = document.getElementById('detailAvatar');
+    const detailName = document.getElementById('detailName');
+    const detailSubInfo = document.getElementById('detailSubInfo');
+    const detailTrait = document.getElementById('detailTrait');
+    const detailTimes = document.getElementById('detailTimes');
+    const detailShared = document.getElementById('detailShared');
+    const detailRecentGames = document.getElementById('detailRecentGames');
+    const reSearchBtn = document.getElementById('reSearchBtn');
+
+    const trendsGrid = document.getElementById('trendsGrid');
+    const globalSignalDesc = document.getElementById('globalSignalDesc');
+
+    // Page Switching
+    function setPage(pageKey) {
+      state.currentPage = pageKey;
+
+      navItems.forEach(btn => {
+        if (btn.dataset.page === pageKey) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+
+      pageSections.forEach(sec => {
+        if (sec.id === `page-${pageKey}`) {
+          sec.classList.add('active');
+        } else {
+          sec.classList.remove('active');
+        }
+      });
+
+      if (pageKey === 'friends') renderFriendsPage();
+      if (pageKey === 'global') renderGlobalPage();
+    }
+
+    navItems.forEach(btn => {
+      btn.addEventListener('click', () => setPage(btn.dataset.page));
+    });
+
+    logoBtn.addEventListener('click', () => setPage('search'));
+
+    // Search Logic with WAS API Integration
+    async function runSearch(username) {
+      const targetUser = (username || searchInput.value).trim() || 'Gaben';
+      state.activeUser = targetUser;
+      searchInput.value = targetUser;
+
+      navStatusText.textContent = `ANALYZING · ${targetUser.toUpperCase()}`;
+      profileUsername.textContent = targetUser;
+      profileAvatar.textContent = targetUser.substring(0, 2).toUpperCase();
+
+      heroBox.classList.remove('centered');
+      profileSection.style.display = 'block';
+
+      const searchBtn = document.getElementById('searchSubmitBtn');
+      if (searchBtn) searchBtn.disabled = true;
+
+      // WAS API Call for User Metrics & Insights
+      try {
+        const res = await fetch(`/api/user/${encodeURIComponent(targetUser)}`);
+        if (!res.ok) throw new Error(`WAS API Error (HTTP ${res.status})`);
+        const data = await res.json();
+
+        if (data.metrics) {
+          document.getElementById('metricGames').textContent = data.metrics.games;
+          document.getElementById('metricHours').textContent = data.metrics.hours;
+          document.getElementById('metricAchievements').textContent = data.metrics.achievements;
+          document.getElementById('metricFriends').textContent = data.metrics.friends;
+        }
+        if (data.playstyle) document.getElementById('insightTitle').textContent = data.playstyle;
+        if (data.insight) document.getElementById('insightDesc').textContent = data.insight;
+        if (data.was_pod) {
+          navStatusText.textContent = `WAS POD: ${data.was_pod} · LIVE`;
+          const badgeEl = document.getElementById('badgeUpdated');
+          if (badgeEl) badgeEl.textContent = `WAS 갱신 완료 (${data.was_pod})`;
+        }
+      } catch (err) {
+        console.warn('WAS API connection failed, using fallback:', err);
+        navStatusText.textContent = `WAS OFFLINE · LOCAL DATA`;
+        const badgeEl = document.getElementById('badgeUpdated');
+        if (badgeEl) badgeEl.textContent = `로컬 데이터 표시`;
+      } finally {
+        if (searchBtn) searchBtn.disabled = false;
+      }
+
+      // WAS API Call for Friends Data
+      try {
+        const resFriends = await fetch(`/api/friends/${encodeURIComponent(targetUser)}`);
+        if (resFriends.ok) {
+          const friendsRes = await resFriends.json();
+          if (friendsRes.friends && friendsRes.friends.length > 0) {
+            friendsData.splice(0, friendsData.length, ...friendsRes.friends);
+          }
+        }
+      } catch (err) {
+        console.warn('WAS Friends API call failed:', err);
+      }
+
+      setPage('search');
+    }
+
+    searchForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      runSearch();
+    });
+
+    goToFriendsBtn.addEventListener('click', () => {
+      setPage('friends');
+    });
+
+    // Render Friends Page
+    function renderFriendsPage() {
+      if (!state.activeUser) {
+        friendsEmptyState.style.display = 'block';
+        friendsActiveContent.style.display = 'none';
+        friendsBadge.style.display = 'none';
+        friendsSubtitle.innerHTML = '먼저 유저를 검색하면 해당 유저의 공개 친구 인사이트를 확인할 수 있습니다.';
+        return;
+      }
+
+      friendsEmptyState.style.display = 'none';
+      friendsActiveContent.style.display = 'block';
+      friendsBadge.style.display = 'block';
+      friendsSubtitle.innerHTML = `<b style="color: #f8fafc;">${state.activeUser}</b>님의 공개 친구 중, 지금 눈여겨볼 만한 플레이어를 발견합니다.`;
+
+      // Sort friends according to active tab
+      let list = [...friendsData];
+      if (state.activeFriendTab === 'total') {
+        list.sort((a, b) => parseInt(b.total.replace(/[^0-9]/g, '')) - parseInt(a.total.replace(/[^0-9]/g, '')));
+        friendsTabTag.textContent = 'TOTAL PLAYTIME · TOP FRIENDS';
+        friendsTabTitle.textContent = 'Steam에 가장 오래 머문 친구';
+      } else if (state.activeFriendTab === 'shared') {
+        list.sort((a, b) => parseInt(b.shared.replace(/[^0-9]/g, '')) - parseInt(a.shared.replace(/[^0-9]/g, '')));
+        friendsTabTag.textContent = 'SHARED GAMES · TOP FRIENDS';
+        friendsTabTitle.textContent = '함께 시작하기 좋은 친구';
+      } else if (state.activeFriendTab === 'achieve') {
+        friendsTabTag.textContent = 'ACHIEVEMENTS · TOP FRIENDS';
+        friendsTabTitle.textContent = '업적 도전을 좋아하는 친구';
+      } else {
+        friendsTabTag.textContent = 'RECENT 2 WEEKS · TOP FRIENDS';
+        friendsTabTitle.textContent = '최근 2주 가장 오래 플레이한 친구';
+      }
+
+      friendsListContainer.innerHTML = list.map((f, i) => {
+        const isSelected = i === state.selectedFriendIndex;
+        const valText = state.activeFriendTab === 'total' ? f.total : (state.activeFriendTab === 'shared' ? f.shared : f.twoWeeks);
+        const valLbl = state.activeFriendTab === 'shared' ? 'SHARED GAMES' : 'PLAY TIME';
+        return `
+          <button class="friend-row ${isSelected ? 'selected' : ''}" onclick="selectFriend(${i})">
+            <span class="friend-rank">0${i + 1}</span>
+            <div class="friend-avatar">${f.code}</div>
+            <div class="friend-details">
+              <strong class="friend-name">${f.name}</strong>
+              <p class="friend-sub">${f.country} · ${f.game}</p>
+            </div>
+            <div class="friend-stat">
+              <span class="friend-stat-val">${valText}</span>
+              <p class="friend-stat-lbl">${valLbl}</p>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
+        `;
+      }).join('');
+
+      renderFriendDetail(list[state.selectedFriendIndex] || list[0]);
+    }
+
+    function selectFriend(idx) {
+      state.selectedFriendIndex = idx;
+      renderFriendsPage();
+    }
+
+    function renderFriendDetail(friend) {
+      if (!friend) return;
+      detailAvatar.textContent = friend.code;
+      detailName.textContent = friend.name;
+      detailSubInfo.textContent = `${state.activeUser}님의 공개 친구 · ${friend.country}`;
+      detailTrait.textContent = friend.trait;
+      detailTimes.textContent = `최근 2주 ${friend.twoWeeks} · 누적 ${friend.total}`;
+      detailShared.textContent = friend.shared;
+
+      const games = [
+        [friend.game, friend.twoWeeks],
+        ['Helldivers 2', '8.3h'],
+        ['Lethal Company', '4.1h']
+      ];
+
+      detailRecentGames.innerHTML = games.map(g => `
+        <div class="recent-game-item">
+          <span>${g[0]}</span>
+          <b style="font-family: var(--font-mono); color: var(--text-muted);">${g[1]}</b>
+        </div>
+      `).join('');
+
+      reSearchBtn.onclick = () => runSearch(friend.name);
+    }
+
+    // Friend Subtabs
+    document.querySelectorAll('[data-friend-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-friend-tab]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.activeFriendTab = btn.dataset.friendTab;
+        state.selectedFriendIndex = 0;
+        renderFriendsPage();
+      });
+    });
+
+    // Render Global Page
+    function renderGlobalPage() {
+      if (state.activeUser) {
+        globalSignalDesc.textContent = `${state.activeUser}님의 친구 네트워크에서도 협동 장르의 최근 플레이가 글로벌 평균보다 높습니다.`;
+      } else {
+        globalSignalDesc.textContent = '유저를 검색하면 친구 네트워크와 글로벌 흐름을 함께 비교할 수 있습니다.';
+      }
+
+      trendsGrid.innerHTML = trendGames.map((g, i) => `
+        <article class="trend-card">
+          <div class="trend-head">
+            <b style="font-family: var(--font-mono); color: var(--cyan-bright);">0${i + 1}</b>
+            <span class="${g.isUp ? 'trend-change-up' : 'trend-change-down'}">▲ ${g.change}</span>
+          </div>
+          <h2 class="trend-title">${g.name}</h2>
+          <p class="trend-genre">${g.genre}</p>
+          <div class="trend-footer">
+            <span style="color: var(--text-dim);">현재 접속자</span>
+            <b>${g.active}</b>
+          </div>
+          <p class="trend-discount">할인 ${g.discount}</p>
+        </article>
+      `).join('');
+    }
+
+    // Initialize Default State
+    renderGlobalPage();
+  </script>
+</body>
+
+</html>

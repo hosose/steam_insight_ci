@@ -1,33 +1,25 @@
-# Dependencies
-node_modules/
-.pnpm-store/
-**/.pnpm-store/
+# Terraform execution outputs
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
 
-# Build outputs
-dist/
-build/
-.next/
-out/
-
-# Environment variables (절대 커밋 금지)
+# Secrets and local configuration
+*.pem
 .env
-.env.local
-.env.*.local
+# 임시로 유지
+# infra/terraform.tfvars
 
-# Logs
-logs/
-*.log
-npm-debug.log*
+# Temporary outputs
+rendered-*.yaml
+.runtime/
 
-# Runtime / Cache
-.cache/
-.vite/
-*.tsbuildinfo
-
-# OS files
+# OS / IDE
 .DS_Store
-Thumbs.db
-
-# IDE
-.idea/
 .vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
