@@ -895,7 +895,7 @@
                   <path d="m9 18 6-6-6-6" />
                 </svg>
               </div>
-              <strong class="discovery-title">공개 친구 184명의<br />플레이 인사이트 보기</strong>
+              <strong class="discovery-title" id="discoveryTitle">공개 친구 0명의<br />플레이 인사이트 보기</strong>
               <small class="discovery-sub">최근 활동·누적 플레이·함께 할 게임 기준</small>
             </button>
           </div>
@@ -936,13 +936,13 @@
         <div id="friendsActiveContent" style="display: none;">
           <div class="tabs-bar">
             <button class="tab-item active" data-friend-tab="recent">최근 2주 <span
-                style="font-family: var(--font-mono); font-size: 10px; opacity: 0.6;">TOP 5</span></button>
+                style="font-family: var(--font-mono); font-size: 10px; opacity: 0.6;">TOP 10</span></button>
             <button class="tab-item" data-friend-tab="total">누적 플레이 <span
-                style="font-family: var(--font-mono); font-size: 10px; opacity: 0.6;">TOP 5</span></button>
+                style="font-family: var(--font-mono); font-size: 10px; opacity: 0.6;">TOP 10</span></button>
             <button class="tab-item" data-friend-tab="shared">함께 할 게임 <span
-                style="font-family: var(--font-mono); font-size: 10px; opacity: 0.6;">TOP 5</span></button>
+                style="font-family: var(--font-mono); font-size: 10px; opacity: 0.6;">TOP 10</span></button>
             <button class="tab-item" data-friend-tab="achieve">업적 <span
-                style="font-family: var(--font-mono); font-size: 10px; opacity: 0.6;">TOP 5</span></button>
+                style="font-family: var(--font-mono); font-size: 10px; opacity: 0.6;">TOP 10</span></button>
           </div>
 
           <div class="friends-content">
@@ -994,10 +994,7 @@
                 <b id="detailShared"
                   style="display: block; font-family: var(--font-mono); font-size: 28px; color: var(--cyan-bright); margin-top: 12px;">18개</b>
                 <p style="font-size: 14px; color: var(--text-muted);">함께 보유한 게임</p>
-                <div class="shared-badge-container">
-                  <span class="game-badge">Deep Rock Galactic</span>
-                  <span class="game-badge">Rust</span>
-                </div>
+                <div class="shared-badge-container" id="detailSharedBadges"></div>
               </div>
               <div class="detail-col">
                 <p class="tag-label" style="color: var(--text-dim);">RECENTLY PLAYED</p>
@@ -1178,6 +1175,12 @@
           document.getElementById('metricHours').textContent = data.metrics.hours;
           document.getElementById('metricAchievements').textContent = data.metrics.achievements;
           document.getElementById('metricFriends').textContent = data.metrics.friends;
+
+          const discoveryTitle = document.getElementById('discoveryTitle');
+          if (discoveryTitle) {
+            const friendCountText = data.metrics.friends !== '비공개' ? data.metrics.friends : '0명';
+            discoveryTitle.innerHTML = `공개 친구 ${friendCountText}의<br />플레이 인사이트 보기`;
+          }
         }
         if (data.playstyle) document.getElementById('insightTitle').textContent = data.playstyle;
         if (data.insight) document.getElementById('insightDesc').textContent = data.insight;
@@ -1242,29 +1245,70 @@
       // Sort friends according to active tab
       let list = [...friendsData];
       if (state.activeFriendTab === 'total') {
-        list.sort((a, b) => parseInt(b.total.replace(/[^0-9]/g, '')) - parseInt(a.total.replace(/[^0-9]/g, '')));
+        // 1) 누적 플레이 순 (내림차순)
+        list.sort((a, b) => {
+          const aVal = parseFloat((a.total || "0").replace(/[^0-9.]/g, '')) || 0;
+          const bVal = parseFloat((b.total || "0").replace(/[^0-9.]/g, '')) || 0;
+          return bVal - aVal;
+        });
         friendsTabTag.textContent = 'TOTAL PLAYTIME · TOP FRIENDS';
         friendsTabTitle.textContent = 'Steam에 가장 오래 머문 친구';
       } else if (state.activeFriendTab === 'shared') {
-        list.sort((a, b) => parseInt(b.shared.replace(/[^0-9]/g, '')) - parseInt(a.shared.replace(/[^0-9]/g, '')));
+        // 2) 함께 할 수 있는 게임 수 순 (내림차순)
+        list.sort((a, b) => {
+          const aVal = parseInt((a.shared || "0").replace(/[^0-9]/g, '')) || 0;
+          const bVal = parseInt((b.shared || "0").replace(/[^0-9]/g, '')) || 0;
+          return bVal - aVal;
+        });
         friendsTabTag.textContent = 'SHARED GAMES · TOP FRIENDS';
         friendsTabTitle.textContent = '함께 시작하기 좋은 친구';
       } else if (state.activeFriendTab === 'achieve') {
+        // 3) 업적 달성률 순 (내림차순)
+        list.sort((a, b) => {
+          const aVal = parseFloat((a.achievement || "0").replace(/[^0-9.]/g, '')) || 0;
+          const bVal = parseFloat((b.achievement || "0").replace(/[^0-9.]/g, '')) || 0;
+          return bVal - aVal;
+        });
         friendsTabTag.textContent = 'ACHIEVEMENTS · TOP FRIENDS';
-        friendsTabTitle.textContent = '업적 도전을 좋아하는 친구';
+        friendsTabTitle.textContent = '업적 달성률이 높은 친구';
       } else {
+        // 4) 최근 2주간 플레이 타임 순 (내림차순) - 기본값
+        list.sort((a, b) => {
+          const aVal = parseFloat((a.twoWeeks || "0").replace(/[^0-9.]/g, '')) || 0;
+          const bVal = parseFloat((b.twoWeeks || "0").replace(/[^0-9.]/g, '')) || 0;
+          return bVal - aVal;
+        });
         friendsTabTag.textContent = 'RECENT 2 WEEKS · TOP FRIENDS';
         friendsTabTitle.textContent = '최근 2주 가장 오래 플레이한 친구';
       }
 
-      friendsListContainer.innerHTML = list.map((f, i) => {
+      const topList = list.slice(0, 10);
+
+      friendsListContainer.innerHTML = topList.map((f, i) => {
         const isSelected = i === state.selectedFriendIndex;
-        const valText = state.activeFriendTab === 'total' ? f.total : (state.activeFriendTab === 'shared' ? f.shared : f.twoWeeks);
-        const valLbl = state.activeFriendTab === 'shared' ? 'SHARED GAMES' : 'PLAY TIME';
+
+        // 탭 선택별 우측 표시 값 & 라벨 매핑
+        let valText = f.twoWeeks;
+        let valLbl = 'RECENT 2W';
+        if (state.activeFriendTab === 'total') {
+          valText = f.total;
+          valLbl = 'TOTAL PLAY';
+        } else if (state.activeFriendTab === 'shared') {
+          valText = f.shared;
+          valLbl = 'SHARED GAMES';
+        } else if (state.activeFriendTab === 'achieve') {
+          valText = f.achievement || '0%';
+          valLbl = 'ACHIEVEMENT';
+        }
+
+        const avatarContent = f.avatar_url
+          ? `<img src="${f.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;" />`
+          : f.code;
+
         return `
           <button class="friend-row ${isSelected ? 'selected' : ''}" onclick="selectFriend(${i})">
             <span class="friend-rank">0${i + 1}</span>
-            <div class="friend-avatar">${f.code}</div>
+            <div class="friend-avatar">${avatarContent}</div>
             <div class="friend-details">
               <strong class="friend-name">${f.name}</strong>
               <p class="friend-sub">${f.country} · ${f.game}</p>
@@ -1288,27 +1332,46 @@
 
     function renderFriendDetail(friend) {
       if (!friend) return;
-      detailAvatar.textContent = friend.code;
+      if (friend.avatar_url) {
+        detailAvatar.innerHTML = `<img src="${friend.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;" />`;
+      } else {
+        detailAvatar.textContent = friend.code;
+      }
+
       detailName.textContent = friend.name;
       detailSubInfo.textContent = `${state.activeUser}님의 공개 친구 · ${friend.country}`;
       detailTrait.textContent = friend.trait;
       detailTimes.textContent = `최근 2주 ${friend.twoWeeks} · 누적 ${friend.total}`;
       detailShared.textContent = friend.shared;
 
-      const games = [
-        [friend.game, friend.twoWeeks],
-        ['Helldivers 2', '8.3h'],
-        ['Lethal Company', '4.1h']
-      ];
+      // 함께 보유한 실제 게임 뱃지 동적 생성
+      const sharedBadgesEl = document.getElementById('detailSharedBadges');
+      if (sharedBadgesEl) {
+        if (friend.shared_games && friend.shared_games.length > 0) {
+          sharedBadgesEl.innerHTML = friend.shared_games
+            .map(gameName => `<span class="game-badge">${gameName}</span>`)
+            .join('');
+        } else {
+          sharedBadgesEl.innerHTML = `<span class="game-badge" style="opacity: 0.5;">공통 보유 게임 없음</span>`;
+        }
+      }
 
-      detailRecentGames.innerHTML = games.map(g => `
-        <div class="recent-game-item">
-          <span>${g[0]}</span>
-          <b style="font-family: var(--font-mono); color: var(--text-muted);">${g[1]}</b>
-        </div>
-      `).join('');
-
-      reSearchBtn.onclick = () => runSearch(friend.name);
+      if (friend.recent_games_list && friend.recent_games_list.length > 0) {
+        detailRecentGames.innerHTML = friend.recent_games_list.map(g => `
+          <div class="recent-game-item">
+            <span>${g.name}</span>
+            <b style="font-family: var(--font-mono); color: var(--text-muted);">${g.hours}</b>
+          </div>
+        `).join('');
+      } else {
+        detailRecentGames.innerHTML = `
+          <div class="recent-game-item">
+            <span style="opacity: 0.5;">최근 2주간 플레이 기록 없음</span>
+            <b style="font-family: var(--font-mono); color: var(--text-muted);">0h</b>
+          </div>
+        `;
+      }
+      reSearchBtn.onclick = () => runSearch(friend.steam_id);
     }
 
     // Friend Subtabs

@@ -5,6 +5,7 @@ from contextlib import closing
 
 import pymysql
 from fastapi import FastAPI, HTTPException
+from concurrent.futures import ThreadPoolExecutor
 
 def load_env_file():
     possible_paths = [
@@ -58,8 +59,59 @@ def init_db_tables(connection):
             )
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS steam_user_friends (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                owner_steam_id VARCHAR(64) NOT NULL,
+                friend_steam_id VARCHAR(64) NOT NULL,
+                friend_name VARCHAR(255) NOT NULL,
+                avatar_url TEXT,
+                country VARCHAR(10) DEFAULT 'UN',
+                most_played_game VARCHAR(255),
+                playtime_2weeks_minutes INT DEFAULT 0,
+                total_playtime_hours INT DEFAULT 0,
+                shared_games_count INT DEFAULT 0,
+                trait VARCHAR(255),
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uk_owner_friend (owner_steam_id, friend_steam_id),
+                INDEX idx_owner_2weeks (owner_steam_id, playtime_2weeks_minutes DESC)
+            )
+            """
+        )
 
 app = FastAPI(title="Steam Insight EKS WAS", version="3.0.0-auto")
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    """
+    Health check endpoint — 외부 요청만 허용, DB 연결 테스트 포함.
+    """
+    db_ok = False
+    conn = None
+    try:
+        # 외부 요청에서만 DB 연결 테스트
+        if os.getenv("DB_HOST"):
+            conn = db_connection()
+            conn.close()
+            db_ok = True
+    except Exception as e:
+        print(f"Health DB check failed: {e}")
+        db_ok = False
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    status = "ok" if db_ok else "degraded"
+    return {
+        "status": status,
+        "was_pod": socket.gethostname(),
+        "db_ok": db_ok,
+        "message": "UP" if db_ok else "DOWN (DB connection issue)"
+    }
 
 
 @app.on_event("startup")
@@ -322,6 +374,117 @@ INSIGHTS = [
     "친구 네트워크와 함께 공포·협동 파티 게임을 주로 즐기며 주기적으로 신작을 탐색합니다."
 ]
 
+def get_user_owned_appids(steam_id: str) -> set:
+    """유저가 소유한 게임의 appid 목록을 set 형태로 반환"""
+    if not STEAM_API_KEY or not steam_id:
+        return set()
+    try:
+        url = f"https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key={STEAM_API_KEY}&steamid={steam_id}"
+        req = urllib.request.urlopen(url, timeout=3)
+        res = json.loads(req.read().decode('utf-8'))
+        games = res.get("response", {}).get("games", [])
+        return {g["appid"] for g in games if "appid" in g}
+    except Exception as e:
+        print(f"Get owned appids error for {steam_id}: {e}")
+        return set()
+
+def fetch_friend_real_stats(friend_steam_id: str, owner_appids: set) -> dict:
+    """
+    친구 1명의 실제 Steam 지표 수집
+    - 최근 2주 플레이 타임 및 대표 게임
+    - 총 누적 플레이 시간
+    - 함께 보유한 게임 수 (owner_appids와 교집합)
+    - 실제 업적 달성률
+    """
+    stats = {
+        "twoWeeks": "0h",
+        "twoWeeks_minutes": 0,
+        "total": "0h",
+        "total_hours": 0,
+        "shared": "0개",
+        "shared_count": 0,
+        "shared_games": [],
+        "recent_games_list": [],
+        "game": "Steam Game",
+        "achievement": "비공개"
+    }
+    
+    if not STEAM_API_KEY or not friend_steam_id:
+        return stats
+
+# 1. 최근 2주 플레이 타임 & 대표 게임 (GetRecentlyPlayedGames)
+    try:
+        recent_url = f"https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/?key={STEAM_API_KEY}&steamid={friend_steam_id}&count=5"
+        req_rec = urllib.request.urlopen(recent_url, timeout=3)
+        res_rec = json.loads(req_rec.read().decode('utf-8'))
+        recent_games = res_rec.get("response", {}).get("games", [])
+        
+        if recent_games:
+            total_2w_min = sum(g.get("playtime_2weeks", 0) for g in recent_games)
+            stats["twoWeeks_minutes"] = total_2w_min
+            stats["twoWeeks"] = f"{round(total_2w_min / 60, 1)}h"
+            stats["game"] = recent_games[0].get("name", "Steam Game")
+            stats["recent_games_list"] = [
+                {
+                    "name": g.get("name", "Steam Game"),
+                    "hours": f"{round(g.get('playtime_2weeks', 0) / 60, 1)}h"
+                }
+                for g in recent_games[:3]
+            ]
+    except Exception as e:
+        print(f"Fetch recent games error for {friend_steam_id}: {e}")
+
+    # 2. 총 플레이 시간 & 보유 게임 교집합 (GetOwnedGames)
+    try:
+        games_url = f"https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key={STEAM_API_KEY}&steamid={friend_steam_id}&include_appinfo=1"
+        req_g = urllib.request.urlopen(games_url, timeout=3)
+        res_g = json.loads(req_g.read().decode('utf-8'))
+        games_list = res_g.get("response", {}).get("games", [])
+        
+        if games_list:
+            total_min = sum(g.get("playtime_forever", 0) for g in games_list)
+            tot_hours = round(total_min / 60)
+            stats["total_hours"] = tot_hours
+            stats["total"] = f"{tot_hours:,}h"
+            
+            # appid: 게임이름 매핑 딕셔너리 생성
+            friend_appids_map = {g["appid"]: g.get("name", "Steam Game") for g in games_list if "appid" in g}
+            friend_appids = set(friend_appids_map.keys())
+            
+            if owner_appids:
+                # 두 유저가 공통으로 가지고 있는 appid 교집합 추출
+                shared_appids = owner_appids.intersection(friend_appids)
+                stats["shared_count"] = len(shared_appids)
+                stats["shared"] = f"{len(shared_appids)}개"
+                
+                # 교집합 게임 중 상위 4개 게임 이름을 리스트로 담기
+                stats["shared_games"] = [friend_appids_map[aid] for aid in list(shared_appids)[:4] if aid in friend_appids_map]
+
+            # 3. 실제 업적 달성률 계산 (상위 3개 게임)
+            top_games = sorted(games_list, key=lambda g: g.get("playtime_forever", 0), reverse=True)[:3]
+            unlocked_cnt = 0
+            avail_cnt = 0
+            for g in top_games:
+                appid = g.get("appid")
+                if not appid:
+                    continue
+                try:
+                    ach_url = f"https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?key={STEAM_API_KEY}&steamid={friend_steam_id}&appid={appid}"
+                    req_ach = urllib.request.urlopen(ach_url, timeout=3)
+                    res_ach = json.loads(req_ach.read().decode('utf-8'))
+                    ach_list = res_ach.get("playerstats", {}).get("achievements", [])
+                    if ach_list:
+                        avail_cnt += len(ach_list)
+                        unlocked_cnt += sum(1 for a in ach_list if a.get("achieved") == 1)
+                except Exception:
+                    continue
+            if avail_cnt > 0:
+                stats["achievement"] = f"{round(unlocked_cnt / avail_cnt * 100)}%"
+
+    except Exception as e:
+        print(f"Fetch owned games error for {friend_steam_id}: {e}")
+
+    return stats
 
 @app.get("/api/user/{username}")
 def analyze_user(username: str) -> dict:
@@ -409,26 +572,108 @@ def analyze_user(username: str) -> dict:
 
 @app.get("/api/friends/{username}")
 def get_user_friends(username: str) -> dict:
-    friend_pool = [
-        {"name": "Anomaly", "code": "AN", "country": "Sweden", "game": "Counter-Strike 2", "trait": "경쟁 FPS와 협동 공포를 오가는 하이브리드 플레이어"},
-        {"name": "shroud", "code": "SH", "country": "Canada", "game": "Escape from Tarkov", "trait": "새로운 슈팅 게임의 메타를 빠르게 탐색하는 정밀 플레이어"},
-        {"name": "S1mple", "code": "S1", "country": "Ukraine", "game": "Dota 2", "trait": "경쟁 게임과 장기 몰입형 RPG를 함께 즐기는 집중형 플레이어"},
-        {"name": "Ninja", "code": "NI", "country": "United States", "game": "Helldivers 2", "trait": "커뮤니티와 함께 신작을 찾아가는 트렌드 탐색가"},
-        {"name": "Pokelawls", "code": "PL", "country": "Canada", "game": "Rust", "trait": "생존 장르와 자유도 높은 샌드박스에 오래 머무는 탐험가"},
-        {"name": "Tarik", "code": "TK", "country": "United States", "game": "VALORANT", "trait": "팀 플레이와 사운드 플레이를 중시하는 전술가"},
-        {"name": "LIRIK", "code": "LK", "country": "United States", "game": "DayZ", "trait": "다양한 신작 인디 게임과 오픈월드 생존을 다각도로 탐험"}
-    ]
-    sampled = random.sample(friend_pool, 5)
-    for f in sampled:
-        f["twoWeeks"] = f"{random.randint(10, 60)}.{random.randint(0, 9)}h"
-        f["total"] = f"{random.randint(1000, 8000):,}h"
-        f["shared"] = f"{random.randint(5, 30)}개"
+    real_friends = []
+    owner_steam_id = None
+
+    # 1. 유저의 Steam ID64 조회
+    if username.isdigit() and len(username) == 17:
+        owner_steam_id = username
+    elif STEAM_API_KEY:
+        try:
+            url = f"https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/?key={STEAM_API_KEY}&vanityurl={urllib.parse.quote(username)}"
+            req = urllib.request.urlopen(url, timeout=4)
+            res = json.loads(req.read().decode('utf-8'))
+            if res.get("response", {}).get("success") == 1:
+                owner_steam_id = res["response"]["steamid"]
+        except Exception as e:
+            print(f"Vanity URL resolve failed: {e}")
+
+    # 2. 검색 유저(Owner)의 보유 게임 목록 계산 (함께할 게임 수 비교용)
+    owner_appids = set()
+    if owner_steam_id:
+        owner_appids = get_user_owned_appids(owner_steam_id)
+
+    # 3. 친구 목록 수집 및 실측 데이터 매핑
+    if STEAM_API_KEY and owner_steam_id:
+        try:
+            friends_url = f"https://api.steampowered.com/ISteamUser/GetFriendList/v1/?key={STEAM_API_KEY}&steamid={owner_steam_id}&relationship=friend"
+            req_f = urllib.request.urlopen(friends_url, timeout=4)
+            res_f = json.loads(req_f.read().decode('utf-8'))
+            friends_list = res_f.get("friendslist", {}).get("friends", [])[:100]
+
+            if friends_list:
+                friend_ids = [f["steamid"] for f in friends_list]
+                ids_str = ",".join(friend_ids)
+                
+                summaries_url = f"https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key={STEAM_API_KEY}&steamids={ids_str}"
+                req_s = urllib.request.urlopen(summaries_url, timeout=4)
+                res_s = json.loads(req_s.read().decode('utf-8'))
+                players = res_s.get("response", {}).get("players", [])
+
+            def process_player(p):
+                    f_steam_id = p.get("steamid", "")
+                    f_stats = fetch_friend_real_stats(f_steam_id, owner_appids)
+                    return {
+                        "steam_id": f_steam_id,
+                        "name": p.get("personaname", "Steam Friend"),
+                        "code": p.get("personaname", "SF")[:2].upper(),
+                        "avatar_url": p.get("avatarfull") or p.get("avatarmedium") or "",
+                        "country": p.get("loccountrycode", "UN"),
+                        "game": f_stats["game"],
+                        "twoWeeks": f_stats["twoWeeks"],
+                        "twoWeeks_minutes": f_stats["twoWeeks_minutes"],
+                        "total": f_stats["total"],
+                        "total_hours": f_stats["total_hours"],
+                        "shared": f_stats["shared"],
+                        "shared_count": f_stats["shared_count"],
+                        "shared_games": f_stats["shared_games"],
+                        "recent_games_list": f_stats["recent_games_list"],
+                        "achievement": f_stats["achievement"],
+                        "trait": "Steam 친구"
+                    }
+
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                real_friends = list(executor.map(process_player, players))
+        except Exception as e:
+            print(f"Real Steam Friends API fetch failed: {e}")
+
+    # 4. DB 저장
+    if os.getenv("DB_HOST") and owner_steam_id and real_friends:
+        try:
+            with closing(db_connection()) as connection:
+                with connection.cursor() as cursor:
+                    for f in real_friends:
+                        cursor.execute(
+                            """
+                            INSERT INTO steam_user_friends
+                            (owner_steam_id, friend_steam_id, friend_name, avatar_url, country, most_played_game, playtime_2weeks_minutes, total_playtime_hours, shared_games_count, trait)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON DUPLICATE KEY UPDATE
+                            friend_name=VALUES(friend_name), avatar_url=VALUES(avatar_url), country=VALUES(country), most_played_game=VALUES(most_played_game),
+                            playtime_2weeks_minutes=VALUES(playtime_2weeks_minutes), total_playtime_hours=VALUES(total_playtime_hours),
+                            shared_games_count=VALUES(shared_games_count), trait=VALUES(trait)
+                            """,
+                            (
+                                owner_steam_id,
+                                f["steam_id"],
+                                f["name"],
+                                f.get("avatar_url", ""),
+                                f["country"],
+                                f["game"],
+                                f.get("twoWeeks_minutes", 0),
+                                f.get("total_hours", 0),
+                                f.get("shared_count", 0),
+                                f["trait"]
+                            )
+                        )
+        except Exception as e:
+            print(f"Friends DB Save Error: {e}")
 
     return {
         "status": "ok",
         "username": username,
         "was_pod": socket.gethostname(),
-        "friends": sampled
+        "friends": real_friends
     }
 
 
