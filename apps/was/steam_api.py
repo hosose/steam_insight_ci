@@ -2,9 +2,11 @@ import os
 import json
 import re
 import random
+import time
 import hashlib
 import urllib.request
 import urllib.parse
+import urllib.error
 import xml.etree.ElementTree as ET
 
 from db import load_env_file
@@ -23,6 +25,19 @@ STORE_SEARCH_URL = "https://store.steampowered.com/search/results/"
 FEATURED_CATEGORIES_URL = "https://store.steampowered.com/api/featuredcategories"
 POPULAR_TAGS_URL = "https://store.steampowered.com/tagdata/populartags/koreana"
 NEWS_URL = "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/"
+
+
+def _urlopen_with_backoff(req: urllib.request.Request, timeout: int = 10, max_retries: int = 2, backoff_seconds: float = 5.0):
+    # store.steampowered.com은 IP당 요청 한도(약 200회/5분, 커뮤니티 관측치)를 넘으면 429를 준다.
+    # 그냥 실패시키는 대신 짧게 쉬었다가 재시도해서, 순간적인 버스트로 인한 실패를 흡수한다.
+    for attempt in range(max_retries + 1):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < max_retries:
+                time.sleep(backoff_seconds * (attempt + 1))
+                continue
+            raise
 
 
 def fetch_steam_public_xml(user_input: str) -> dict | None:
@@ -252,7 +267,7 @@ INSIGHTS = [
 def fetch_top_played_games() -> list[dict]:
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     req = urllib.request.Request(CHART_URL, headers=headers)
-    with urllib.request.urlopen(req, timeout=10) as response:
+    with _urlopen_with_backoff(req, timeout=10) as response:
         data = json.loads(response.read().decode('utf-8'))
     return data.get("response", {}).get("ranks", [])
 
@@ -263,7 +278,7 @@ def fetch_app_details(appid: int) -> dict | None:
     url = f"{APPDETAILS_URL}?appids={appid}&l=koreana"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=10) as response:
+    with _urlopen_with_backoff(req, timeout=10) as response:
         data = json.loads(response.read().decode('utf-8'))
     entry = data.get(str(appid))
     if not entry or not entry.get("success"):
@@ -274,7 +289,7 @@ def fetch_app_details(appid: int) -> dict | None:
 def fetch_featured_appids() -> set[int]:
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     req = urllib.request.Request(FEATURED_CATEGORIES_URL, headers=headers)
-    with urllib.request.urlopen(req, timeout=10) as response:
+    with _urlopen_with_backoff(req, timeout=10) as response:
         data = json.loads(response.read().decode('utf-8'))
 
     appids = set()
@@ -296,7 +311,7 @@ def fetch_search_appids(start: int = 0, count: int = 100) -> set[int]:
     url = f"{STORE_SEARCH_URL}?{params}"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=10) as response:
+    with _urlopen_with_backoff(req, timeout=10) as response:
         data = json.loads(response.read().decode('utf-8'))
 
     appids = set()
@@ -311,7 +326,7 @@ def fetch_search_appids(start: int = 0, count: int = 100) -> set[int]:
 def fetch_popular_tags() -> list[dict]:
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     req = urllib.request.Request(POPULAR_TAGS_URL, headers=headers)
-    with urllib.request.urlopen(req, timeout=10) as response:
+    with _urlopen_with_backoff(req, timeout=10) as response:
         data = json.loads(response.read().decode('utf-8'))
     return [
         {"tagid": tag.get("tagid"), "name": tag.get("name")}
@@ -332,7 +347,7 @@ def fetch_appids_by_tag(tagid: int, count: int = 15) -> set[int]:
     url = f"{STORE_SEARCH_URL}?{params}"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=10) as response:
+    with _urlopen_with_backoff(req, timeout=10) as response:
         data = json.loads(response.read().decode('utf-8'))
 
     appids = set()
@@ -354,7 +369,7 @@ def fetch_game_tags(appid: int) -> list[str]:
         'Cookie': 'birthtime=0; lastagecheckage=1-January-1990; wants_mature_content=1; mature_content=1',
     }
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=10) as response:
+    with _urlopen_with_backoff(req, timeout=10) as response:
         html = response.read().decode('utf-8', errors='replace')
 
     match = re.search(r"InitAppTagModal\(\s*\d+,\s*(\[.*?\])", html, re.S)

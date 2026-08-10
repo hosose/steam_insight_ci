@@ -216,7 +216,7 @@ def collect_game_charts() -> None:
                 exhausted_genre_names.add(tag["name"])
         except Exception as e:
             print(f"Tag search warning ({tag['name']}): {e}")
-        time.sleep(0.5)  # 장르 검색 요청 과다 방지 (부트스트랩 때는 40개까지 연속 호출됨)
+        time.sleep(1.0)  # 장르 검색 요청 과다 방지 (부트스트랩 때는 40개까지 연속 호출됨) - store.steampowered.com 공용 한도(약 200회/5분) 고려
 
     try:
         with closing(db_connection()) as connection:
@@ -254,12 +254,12 @@ def collect_game_charts() -> None:
                     if details:
                         save_game_info(connection, appid, details)
                         new_appid_count += 1
-                    time.sleep(1)  # store API 요청 과다 방지
+                    time.sleep(1.5)  # appdetails 요청 과다 방지 (store.steampowered.com 공용 한도 최소 1.5초 권장)
 
                     tag_names = fetch_game_tags(appid)
                     if tag_names:
                         save_game_genres(connection, appid, tag_names)
-                    time.sleep(1)  # 상세 페이지 요청 과다 방지
+                    time.sleep(1.5)  # 상세 페이지(태그 스크래핑) 요청 과다 방지 - 같은 도메인 한도 공유
                 except Exception as ed:
                     print(f"Game info fetch warning (appid={appid}): {ed}")
 
