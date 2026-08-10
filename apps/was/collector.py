@@ -105,6 +105,21 @@ def save_game_info(connection, appid: int, details: dict) -> None:
         )
 
 
+def prune_exhausted_genres(connection, genre_names: set[str], min_games: int) -> list[str]:
+    # Steam 검색 결과 자체가 다 떨어진(exhausted) 장르인데도 여전히 min_games 미만이면
+    # 앞으로도 절대 못 채울 장르이므로, 영원히 부트스트랩만 도는 걸 막기 위해 아예 지운다.
+    # genres 삭제 시 game_genres도 FK ON DELETE CASCADE로 같이 정리된다.
+    pruned = []
+    with connection.cursor() as cursor:
+        for name in genre_names:
+            cursor.execute("SELECT COUNT(*) AS c FROM game_genres WHERE genre_name = %s", (name,))
+            count = (cursor.fetchone() or {}).get("c", 0)
+            if count < min_games:
+                cursor.execute("DELETE FROM genres WHERE name = %s", (name,))
+                pruned.append(name)
+    return pruned
+
+
 def save_game_genres(connection, appid: int, tag_names: list[str]) -> None:
     if not tag_names:
         return
@@ -191,9 +206,15 @@ def collect_game_charts() -> None:
         if next_genre_cursor >= len(popular_tags):
             next_genre_cursor = 0
 
+    # 검색 결과 자체가 요청 개수보다 적게 나오면 Steam에 그 태그로 찾을 수 있는 게임이
+    # 그게 전부라는 뜻 - 처리 후에도 여전히 기준 미달이면 "채울 수 없는" 장르로 간주한다.
+    exhausted_genre_names = set()
     for tag in genre_batch:
         try:
-            discovery_appids |= fetch_appids_by_tag(tag["tagid"], count=GENRE_SEARCH_COUNT)
+            found = fetch_appids_by_tag(tag["tagid"], count=GENRE_SEARCH_COUNT)
+            discovery_appids |= found
+            if len(found) < GENRE_SEARCH_COUNT:
+                exhausted_genre_names.add(tag["name"])
         except Exception as e:
             print(f"Tag search warning ({tag['name']}): {e}")
         time.sleep(0.5)  # 장르 검색 요청 과다 방지 (부트스트랩 때는 40개까지 연속 호출됨)
@@ -243,6 +264,13 @@ def collect_game_charts() -> None:
                 except Exception as ed:
                     print(f"Game info fetch warning (appid={appid}): {ed}")
 
+            pruned_genres = []
+            if exhausted_genre_names:
+                try:
+                    pruned_genres = prune_exhausted_genres(connection, exhausted_genre_names, MIN_GAMES_PER_GENRE)
+                except Exception as e:
+                    print(f"Genre pruning warning: {e}")
+
         print(
             f"Chart snapshot saved: {len(ranks)} chart games, "
             f"{len(candidate_appids)} candidates checked, {new_appid_count} new game_info rows, "
@@ -250,7 +278,8 @@ def collect_game_charts() -> None:
             f"{'BOOTSTRAP' if is_bootstrapping else 'steady'} genres scanned this cycle "
             f"({len(underfilled_genre_names)} still underfilled before this run): "
             f"{[t['name'] for t in genre_batch]} "
-            f"(cursor {genre_cursor} -> {next_genre_cursor} of {len(popular_tags)})"
+            f"(cursor {genre_cursor} -> {next_genre_cursor} of {len(popular_tags)}), "
+            f"pruned {len(pruned_genres)} unreachable genres: {pruned_genres}"
         )
     except Exception as e:
         print(f"Chart snapshot save error: {e}")
