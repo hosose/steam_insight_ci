@@ -54,7 +54,7 @@ echo [7/7] Build and health-check WAS image
 docker build --platform linux/amd64 --tag "%WAS_IMAGE%" "%ROOT_DIR%\apps\was"
 if errorlevel 1 goto :error
 
-docker run --detach --name "%WAS_CONTAINER%" --publish 18000:8080 "%WAS_IMAGE%" >nul
+docker run --detach --name "%WAS_CONTAINER%" --publish 18000:8000 "%WAS_IMAGE%" >nul
 if errorlevel 1 goto :error
 call :wait_for_url "http://127.0.0.1:18000/health" "WAS"
 if errorlevel 1 goto :error
@@ -73,7 +73,7 @@ for /L %%N in (1,1,30) do (
     echo [OK] !CHECK_NAME! health check
     exit /b 0
   )
-  timeout /t 1 /nobreak >nul
+  ping 127.0.0.1 -n 2 >nul
 )
 echo [ERROR] !CHECK_NAME! health check failed: !CHECK_URL!
 exit /b 1
