@@ -162,7 +162,10 @@ async def get_http_client(app: FastAPI) -> httpx.AsyncClient:
     if app.state.http_client is None:
         async with app.state.http_client_lock:
             if app.state.http_client is None:
-                app.state.http_client = httpx.AsyncClient(timeout=10.0)
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                app.state.http_client = httpx.AsyncClient(headers=headers, timeout=10.0)
     return app.state.http_client
 
 @asynccontextmanager
@@ -552,7 +555,13 @@ async def get_user_friends(username: str, request: Request) -> dict:
                     }
 
                 if players:
-                    real_friends = await asyncio.gather(*(process_player(p) for p in players))
+                    CHUNK_SIZE = 10
+                    real_friends = []
+                    for i in range(0, len(players), CHUNK_SIZE):
+                        chunk = players[i:i + CHUNK_SIZE]
+                        chunk_results = await asyncio.gather(*(process_player(p) for p in chunk))
+                        real_friends.extend(chunk_results)
+                        await asyncio.sleep(0.25)
         except Exception as e:
             print(f"Real Steam Friends API fetch failed: {e}")
 
