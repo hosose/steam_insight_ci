@@ -54,7 +54,7 @@ echo "[4/7] Terraform 문법 및 참조 검사"
 terraform -chdir="${INFRA_DIR}" validate
 
 echo "[5/7] WAS Python 문법 검사"
-python3 -m py_compile "${ROOT_DIR}/apps/was/app.py"
+python3 -m py_compile "${ROOT_DIR}"/apps/was/*.py
 
 echo "[6/7] WEB 이미지 빌드 및 상태 확인"
 docker build --platform linux/amd64 --tag "${WEB_IMAGE}" "${ROOT_DIR}/apps/web"
