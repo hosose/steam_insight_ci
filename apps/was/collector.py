@@ -1,6 +1,5 @@
 import os
 import time
-import asyncio
 from contextlib import closing
 from datetime import datetime
 
@@ -285,12 +284,7 @@ def collect_game_charts() -> None:
         print(f"Chart snapshot save error: {e}")
 
 
-async def chart_collection_loop():
-    while True:
-        await asyncio.get_event_loop().run_in_executor(None, collect_game_charts)
-        await asyncio.sleep(CHART_COLLECT_INTERVAL_SECONDS)
-
-
 if __name__ == "__main__":
-    # 향후 K8s CronJob 엔트리포인트: `python collector.py`로 단발 실행 (WAS 프로세스 없이도 동작).
+    # K8s CronJob 엔트리포인트: `python collector.py`로 단발 실행 후 종료 (WAS 프로세스 불필요).
+    # 15분 주기는 CronJob 스케줄이 담당하므로 여기서는 반복하지 않는다.
     collect_game_charts()
