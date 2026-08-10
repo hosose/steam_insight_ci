@@ -1,17 +1,25 @@
 from starlette import staticfiles
 import asyncio
 import json
+import math
 import os
 import random
 import re
 import socket
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
+from datetime import datetime, timedelta
 
 import aiomysql
 import httpx
 from fastapi import FastAPI, HTTPException, Request
+
+from db import db_connection, init_db_tables
+from steam_api import fetch_app_news, clean_news_summary
+from collector import chart_collection_loop
+
+KST_OFFSET = timedelta(hours=9)  # 한국은 DST 없이 UTC+9 고정이라 오프셋 상수로 충분함
 
 # ---------------------------------------------------------------------------
 # Mock 데이터 (Steam / Bedrock API 키가 없는 환경 — 로컬 무설정 실행, CI 헬스체크 등 — 의 폴백)
@@ -105,6 +113,27 @@ def required_env(name: str) -> str:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
 
+
+def seeded_random(seed_str: str):
+    h = 0
+    for ch in seed_str:
+        h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+    state = {"h": h}
+
+    def _next() -> float:
+        state["h"] = (state["h"] * 1664525 + 1013904223) & 0xFFFFFFFF
+        return state["h"] / 4294967296
+
+    return _next
+
+
+def estimate_concurrent(base: float, hour: int, seed: str) -> int:
+    # 저녁에 오르고 새벽에 내리는 하루 주기 패턴 + 재현 가능한 약간의 노이즈.
+    rand = seeded_random(seed)
+    wave = 0.6 + 0.4 * math.sin(((hour - 6) / 24) * 2 * math.pi - math.pi / 2)
+    noise = 0.9 + rand() * 0.2
+    return max(0, round(base * wave * noise))
+
 # ---------------------------------------------------------------------------
 # DB / HTTP 클라이언트 관리
 # ---------------------------------------------------------------------------
@@ -143,6 +172,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db_pool_lock = asyncio.Lock()
     app.state.http_client = None
     app.state.http_client_lock = asyncio.Lock()
+
+    # 게임 차트/장르 수집기(동기 pymysql 기반, db.py+collector.py)는 위 aiomysql 풀과는
+    # 별개 커넥션을 쓴다 — 15분 주기 배치라 굳이 커넥션 풀을 공유할 필요가 없어 단순하게 유지.
+    #
+    # K8s에서는 WAS 파드가 DB 파드/RDS보다 먼저 뜨는 경우가 있어(콜드스타트 레이스),
+    # 최초 시도가 실패하면 그대로 넘어가 game_chart_rankings 등 테이블이 영영 생성되지
+    # 않는 문제가 있었다 — 짧게 재시도해서 이 창을 흡수한다.
+    if os.getenv("DB_HOST"):
+        DB_INIT_RETRIES = 5
+        DB_INIT_RETRY_DELAY_SECONDS = 3
+        for attempt in range(1, DB_INIT_RETRIES + 1):
+            try:
+                with closing(db_connection()) as connection:
+                    init_db_tables(connection)
+                    print("Collector DB tables (game_chart_rankings, game_info, genres, ...) initialized.")
+                break
+            except Exception as e:
+                print(f"Startup collector DB init warning (attempt {attempt}/{DB_INIT_RETRIES}): {e}")
+                if attempt < DB_INIT_RETRIES:
+                    await asyncio.sleep(DB_INIT_RETRY_DELAY_SECONDS)
+    asyncio.create_task(chart_collection_loop())
+
     yield
     if app.state.db_pool is not None:
         app.state.db_pool.close()
@@ -540,6 +591,232 @@ async def get_user_friends(username: str, request: Request) -> dict:
         "was_pod": socket.gethostname(),
         "friends": real_friends
     }
+
+
+@app.get("/api/trends")
+def get_trend_games(tab: str = "overview", genre: str | None = None, limit: int = 4) -> dict:
+    try:
+        with closing(db_connection()) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT MAX(collected_at) AS latest FROM game_chart_rankings")
+                latest_ts = (cursor.fetchone() or {}).get("latest")
+
+                if not latest_ts:
+                    return {"status": "ok", "tab": tab, "trends": []}
+
+                cursor.execute(
+                    "SELECT MAX(collected_at) AS previous FROM game_chart_rankings WHERE collected_at < %s",
+                    (latest_ts,),
+                )
+                previous_ts = (cursor.fetchone() or {}).get("previous")
+
+                cursor.execute(
+                    """
+                    SELECT r.appid, r.ranking, r.concurrent_in_game,
+                           g.name, g.header_image, g.genres, g.discount_percent
+                    FROM game_chart_rankings r
+                    LEFT JOIN game_info g ON g.appid = r.appid
+                    WHERE r.collected_at = %s
+                    ORDER BY r.ranking ASC
+                    """,
+                    (latest_ts,),
+                )
+                latest_rows = cursor.fetchall()
+
+                previous_map = {}
+                if previous_ts:
+                    cursor.execute(
+                        "SELECT appid, concurrent_in_game FROM game_chart_rankings WHERE collected_at = %s",
+                        (previous_ts,),
+                    )
+                    previous_map = {row["appid"]: row["concurrent_in_game"] for row in cursor.fetchall()}
+
+                genre_appids = None
+                if genre:
+                    cursor.execute(
+                        "SELECT appid FROM game_genres WHERE genre_name = %s",
+                        (genre,),
+                    )
+                    genre_appids = {row["appid"] for row in cursor.fetchall()}
+
+        trends = []
+        for row in latest_rows:
+            if not row.get("name"):
+                # game_info가 없는 appid(스토어 페이지가 깨졌거나 삭제된 앱 등) - 이름을 알 수 없으니 노출하지 않는다.
+                continue
+
+            current = row["concurrent_in_game"] or 0
+            prev = previous_map.get(row["appid"])
+            change_pct = round((current - prev) / prev * 100, 1) if prev else None
+
+            genres = row.get("genres") or ""
+            genre_label = genres.split(",")[0].strip().upper() if genres else "-"
+            discount_percent = row.get("discount_percent") or 0
+
+            trends.append({
+                "appid": row["appid"],
+                "name": row["name"],
+                "genre": genre_label,
+                "header_image": row.get("header_image") or "",
+                "active": f"{current:,}",
+                "active_raw": current,
+                "change": f"{change_pct:+.1f}%" if change_pct is not None else "—",
+                "change_pct": change_pct,
+                "isUp": change_pct is None or change_pct >= 0,
+                "discount": f"-{discount_percent}%" if discount_percent > 0 else "—",
+                "discount_percent": discount_percent,
+            })
+
+        if genre_appids is not None:
+            trends = [t for t in trends if t["appid"] in genre_appids]
+
+        if tab == "discount":
+            trends = [t for t in trends if t["discount_percent"] > 0]
+            trends.sort(key=lambda t: t["discount_percent"], reverse=True)
+        elif tab == "rising":
+            trends = [t for t in trends if t["change_pct"] is not None]
+            trends.sort(key=lambda t: t["change_pct"], reverse=True)
+        elif tab == "popular":
+            trends.sort(key=lambda t: t["active_raw"], reverse=True)
+        elif tab == "news":
+            trends = []  # 뉴스·패치는 아직 데이터 없음
+        # overview: game_chart_rankings.ranking 순서 그대로 유지
+
+        return {"status": "ok", "tab": tab, "trends": trends[:limit]}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Trend data fetch failed: {exc}") from exc
+
+
+@app.get("/api/trends/timeseries")
+def get_trend_timeseries(appid: int, hours: int = 24) -> dict:
+    try:
+        with closing(db_connection()) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT name FROM game_info WHERE appid = %s", (appid,))
+                info_row = cursor.fetchone()
+                name = (info_row or {}).get("name") or f"App {appid}"
+
+                cursor.execute(
+                    """
+                    SELECT collected_at, concurrent_in_game
+                    FROM game_chart_rankings
+                    WHERE appid = %s
+                    ORDER BY collected_at ASC
+                    """,
+                    (appid,),
+                )
+                all_rows = cursor.fetchall()
+
+        # DB에는 UTC로 저장돼 있으므로(datetime.utcnow()), 버킷 경계/시간 라벨만 KST(UTC+9)로 변환한다.
+        # 그래야 "저녁에 오르고 새벽에 내리는" 패턴이 실제 한국 시간과 맞게 표시/추정된다.
+        now_utc = datetime.utcnow()
+        now_kst = now_utc + KST_OFFSET
+        window_start_utc = now_utc - timedelta(hours=hours)
+        real_rows = [r for r in all_rows if r["collected_at"] >= window_start_utc]
+
+        # 추정치의 기준값: 이 시간창 안의 가장 최근 실데이터, 없으면 전체 이력 중 가장 최근 값.
+        base_row = real_rows[-1] if real_rows else (all_rows[-1] if all_rows else None)
+        base_value = base_row["concurrent_in_game"] if base_row else 0
+
+        points = []
+        for i in range(hours - 1, -1, -1):
+            bucket_start_kst = (now_kst - timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
+            bucket_start_utc = bucket_start_kst - KST_OFFSET
+            bucket_end_utc = bucket_start_utc + timedelta(hours=1)
+
+            bucket_values = [
+                r["concurrent_in_game"] for r in real_rows
+                if bucket_start_utc <= r["collected_at"] < bucket_end_utc
+            ]
+            if bucket_values:
+                value = round(sum(bucket_values) / len(bucket_values))
+                estimated = False
+            else:
+                value = estimate_concurrent(base_value, bucket_start_kst.hour, f"{appid}-{bucket_start_kst.hour}")
+                estimated = True
+
+            points.append({
+                "label": bucket_start_kst.strftime("%H:%M"),
+                "value": value,
+                "estimated": estimated,
+            })
+
+        estimated_count = sum(1 for p in points if p["estimated"])
+        if estimated_count == 0:
+            source = "real"
+        elif estimated_count == len(points):
+            source = "estimated"
+        else:
+            source = "mixed"
+
+        return {"status": "ok", "appid": appid, "name": name, "source": source, "points": points}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Timeseries fetch failed: {exc}") from exc
+
+
+@app.get("/api/genres")
+def get_genres() -> dict:
+    try:
+        with closing(db_connection()) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT name FROM genres ORDER BY name ASC")
+                genres = [row["name"] for row in cursor.fetchall()]
+        return {"status": "ok", "genres": genres}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Genres fetch failed: {exc}") from exc
+
+
+@app.get("/api/news")
+def get_news(limit: int = 8) -> dict:
+    try:
+        with closing(db_connection()) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT MAX(collected_at) AS latest FROM game_chart_rankings")
+                latest_ts = (cursor.fetchone() or {}).get("latest")
+                if not latest_ts:
+                    return {"status": "ok", "news": []}
+
+                cursor.execute(
+                    """
+                    SELECT r.appid, g.name, g.header_image
+                    FROM game_chart_rankings r
+                    LEFT JOIN game_info g ON g.appid = r.appid
+                    WHERE r.collected_at = %s
+                    ORDER BY r.ranking ASC
+                    LIMIT %s
+                    """,
+                    (latest_ts, limit),
+                )
+                games = cursor.fetchall()
+
+        news_list = []
+        for game in games:
+            if not game.get("name"):
+                # game_info가 없는 appid(스토어 페이지가 깨졌거나 삭제된 앱 등) - 이름을 알 수 없으니 노출하지 않는다.
+                continue
+            try:
+                items = fetch_app_news(game["appid"], count=1, maxlength=280)
+            except Exception as e:
+                print(f"News fetch warning (appid={game['appid']}): {e}")
+                continue
+            if not items:
+                continue
+            item = items[0]
+            news_list.append({
+                "appid": game["appid"],
+                "game_name": game["name"],
+                "header_image": game.get("header_image") or "",
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "summary": clean_news_summary(item.get("contents", "")),
+                "date_unix": item.get("date"),
+                "feed_label": item.get("feedlabel"),
+            })
+
+        return {"status": "ok", "news": news_list}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"News fetch failed: {exc}") from exc
+
 
 @app.get("/api/db")
 async def db_test(request: Request) -> dict:

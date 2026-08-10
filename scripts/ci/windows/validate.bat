@@ -38,8 +38,10 @@ terraform -chdir="%INFRA_DIR%" validate
 if errorlevel 1 goto :error
 
 echo [5/7] WAS Python syntax check
-"%PYTHON_CMD%" -m py_compile "%ROOT_DIR%\apps\was\app.py"
-if errorlevel 1 goto :error
+for %%F in ("%ROOT_DIR%\apps\was\*.py") do (
+  "%PYTHON_CMD%" -m py_compile "%%~fF"
+  if errorlevel 1 goto :error
+)
 
 echo [6/7] Build and health-check WEB image
 docker build --platform linux/amd64 --tag "%WEB_IMAGE%" "%ROOT_DIR%\apps\web"
