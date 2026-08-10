@@ -1673,13 +1673,13 @@
         }
 
         const avatarContent = f.avatar_url
-          ? `<img src="${f.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;" />`
-          : f.code;
+          ? `<img src="${encodeURI(f.avatar_url)}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;" />`
+          : escapeHtml(f.code);
 
         return `
           <button class="friend-row ${isSelected ? 'selected' : ''}" onclick="selectFriend(${i})">
-            <span class="friend-rank">0${i + 1}</span>
-            <div class="friend-avatar">${escapeHtml(f.code)}</div>
+            <span class="friend-rank">${(i + 1).toString().padStart(2, '0')}</span>
+            <div class="friend-avatar">${avatarContent}</div>
             <div class="friend-details">
               <strong class="friend-name">
                 <span class="status-dot-inline ${f.persona_state && f.persona_state !== 'offline' ? 'online' : 'offline'}"></span>
