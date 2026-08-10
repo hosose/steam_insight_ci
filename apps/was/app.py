@@ -14,7 +14,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 
 # ---------------------------------------------------------------------------
-# Mock 데이터 (Steam / Bedrock API 키가 없는 환경 폴백)
+# Mock 데이터 (Steam / Bedrock API 키가 없는 환경 — 로컬 무설정 실행, CI 헬스체크 등 — 의 폴백)
 # ---------------------------------------------------------------------------
 
 PLAYSTYLES = [
@@ -275,6 +275,15 @@ def fetch_friend_real_stats(steam_api_key: str, friend_steam_id: str, owner_appi
     if not steam_api_key or not friend_steam_id:
         return stats
 
+    api_key, region, model_id = config
+    games_summary = ", ".join(f"{g['name']} {g['hours']}h" for g in top_games)
+    prompt = (
+        f"Steam 유저 '{display_name}'의 보유 게임별 누적 플레이 시간(높은 순): {games_summary}.\n"
+        "이 데이터만 근거로 플레이스타일을 분석해서 아래 JSON 형식으로만 답하라. "
+        "다른 설명, 인사말, 코드블록 표시는 절대 추가하지 마라.\n"
+        '{"playstyle": "8자 내외의 한글 플레이스타일 명칭", '
+        '"insight": "실제 게임 이름과 시간을 근거로 든 한글 2문장 이내 인사이트"}'
+    )
     try:
         recent_url = f"https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/?key={steam_api_key}&steamid={friend_steam_id}&count=5"
         res_rec = httpx.get(recent_url, timeout=12.0).json()
