@@ -254,13 +254,13 @@ def build_game_entries(games: list[dict], limit: int = 5) -> list[dict]:
 # 실측 친구 데이터 수집 헬퍼
 # ---------------------------------------------------------------------------
 
-def get_user_owned_appids(steam_api_key: str, steam_id: str) -> set:
+async def get_user_owned_appids(client: httpx.AsyncClient, steam_api_key: str, steam_id: str) -> set:
     if not steam_api_key or not steam_id:
         return set()
     try:
-        url = f"https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key={steam_api_key}&steamid={steam_id}"
-        req = httpx.get(url, timeout=3.0)
-        games = req.json().get("response", {}).get("games", [])
+        url = f"{STEAM_API_BASE}/IPlayerService/GetOwnedGames/v1/"
+        res = await client.get(url, params={"key": steam_api_key, "steamid": steam_id}, timeout=4.0)
+        games = res.json().get("response", {}).get("games", [])
         return {g["appid"] for g in games if "appid" in g}
     except Exception:
         return set()
@@ -280,9 +280,9 @@ async def fetch_friend_real_stats(client: httpx.AsyncClient, steam_api_key: str,
         for attempt in range(2):
             try:
                 recent_url = f"{STEAM_API_BASE}/IPlayerService/GetRecentlyPlayedGames/v1/?key={steam_api_key}&steamid={friend_steam_id}&count=5"
-                res_rec = (await client.get(recent_url, timeout=5.0)).json()
-                recent_games = res_rec.get("response", {}).get("games", [])
-                if recent_games:
+                res_rec = await client.get(recent_url, timeout=4.0)
+                if res_rec.status_code == 200:
+                    recent_games = res_rec.json().get("response", {}).get("games", [])
                     break
             except Exception:
                 await asyncio.sleep(0.1)
@@ -459,8 +459,8 @@ async def get_user_friends(username: str, request: Request) -> dict:
         owner_steam_id = username if (username.isdigit() and len(username) == 17) else None
 
     real_friends = []
-    owner_appids = get_user_owned_appids(steam_api_key, owner_steam_id) if owner_steam_id else set()
-
+    owner_appids = await get_user_owned_appids(client, steam_api_key, owner_steam_id) if owner_steam_id else set()
+    
     if owner_steam_id:
         try:
             friends_list = await fetch_friend_list(client, steam_api_key, owner_steam_id)
@@ -497,8 +497,7 @@ async def get_user_friends(username: str, request: Request) -> dict:
                     }
 
                 if players:
-                    with ThreadPoolExecutor(max_workers=5) as executor:
-                        real_friends = await asyncio.gather(*(process_player(p) for p in players))
+                    real_friends = await asyncio.gather(*(process_player(p) for p in players))
         except Exception as e:
             print(f"Real Steam Friends API fetch failed: {e}")
 
