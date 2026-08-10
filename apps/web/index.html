@@ -618,6 +618,119 @@
       color: var(--text-dim);
     }
 
+    .top-games-list {
+      margin-top: 16px;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .top-games-list li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .top-games-list .rank {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--cyan-bright);
+      width: 18px;
+      flex-shrink: 0;
+    }
+
+    .top-games-list .name {
+      flex: 1;
+      min-width: 0;
+      font-size: 13px;
+      color: var(--text-main);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .top-games-list .count {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    .news-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .news-card {
+      display: flex;
+      gap: 16px;
+      border: 1px solid var(--border-color);
+      background: var(--card-bg);
+      padding: 16px;
+      transition: border-color 0.2s;
+    }
+
+    .news-card:hover {
+      border-color: rgba(103, 232, 249, 0.6);
+    }
+
+    .news-thumb {
+      width: 140px;
+      height: 78px;
+      object-fit: cover;
+      flex-shrink: 0;
+      border: 1px solid var(--border-color);
+    }
+
+    .news-body {
+      min-width: 0;
+    }
+
+    .news-meta {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text-dim);
+    }
+
+    .news-meta .news-game {
+      color: var(--cyan-bright);
+      font-weight: 700;
+    }
+
+    .news-title {
+      display: block;
+      margin-top: 6px;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-main);
+      text-decoration: none;
+    }
+
+    .news-title:hover {
+      color: var(--cyan-bright);
+      text-decoration: underline;
+    }
+
+    .news-summary {
+      margin-top: 8px;
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+
+    @media (max-width: 640px) {
+      .news-card {
+        flex-direction: column;
+      }
+
+      .news-thumb {
+        width: 100%;
+        height: 140px;
+      }
+    }
+
     /* Friend Detail Card */
     .friend-detail-section {
       margin-top: 24px;
@@ -776,6 +889,24 @@
       background-position: center;
     }
 
+    .load-more-btn {
+      display: block;
+      margin: 24px auto 0;
+      padding: 12px 28px;
+      font-size: 13px;
+      font-weight: 700;
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .load-more-btn:hover {
+      border-color: var(--cyan-bright);
+      color: var(--cyan-bright);
+    }
+
     .dau-chart-panel {
       border: 1px solid rgba(103, 232, 249, 0.2);
       background: var(--card-bg);
@@ -844,22 +975,69 @@
       color: var(--text-dim);
     }
 
-    .genre-pills {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
+    .genre-filter {
+      position: relative;
+      display: inline-block;
       margin-bottom: 20px;
     }
 
+    .genre-filter-trigger {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 700;
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .genre-filter-trigger:hover,
+    .genre-filter-trigger.open {
+      border-color: var(--cyan-bright);
+      color: var(--cyan-bright);
+    }
+
+    .genre-filter-trigger svg {
+      transition: transform 0.2s;
+    }
+
+    .genre-filter-trigger.open svg {
+      transform: rotate(180deg);
+    }
+
+    .genre-dropdown {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      z-index: 20;
+      width: min(320px, 90vw);
+      max-height: 320px;
+      overflow-y: auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-content: flex-start;
+      gap: 8px;
+      border: 1px solid var(--border-color);
+      background: var(--card-bg);
+      padding: 12px;
+      box-shadow: 0 16px 32px rgba(0, 0, 0, 0.5);
+    }
+
     .genre-pill {
+      flex-shrink: 0;
       padding: 6px 14px;
       font-size: 12px;
       font-weight: 700;
-      background: var(--card-bg);
+      background: var(--bg-color);
       border: 1px solid var(--border-color);
       color: var(--text-dim);
       cursor: pointer;
       transition: all 0.2s;
+      white-space: nowrap;
     }
 
     .genre-pill:hover {
@@ -1130,7 +1308,6 @@
           <button class="tab-item" data-global-tab="popular">인기순</button>
           <button class="tab-item" data-global-tab="discount">할인순</button>
           <button class="tab-item" data-global-tab="rising">급상승</button>
-          <button class="tab-item" data-global-tab="category">카테고리</button>
           <button class="tab-item" data-global-tab="news">뉴스 · 패치</button>
         </div>
 
@@ -1139,7 +1316,7 @@
             <div class="dau-chart-panel" id="dauChartPanel" style="display: none;">
               <div class="dau-chart-header">
                 <div>
-                  <p class="tag-label">DAU · 동시 접속자 추이 (샘플 데이터)</p>
+                  <p class="tag-label">DAU · 동시 접속자 추이</p>
                   <h2 id="dauChartTitle" style="margin-top: 6px; font-size: 18px; font-weight: 700;"></h2>
                 </div>
                 <select id="dauGameSelect" class="dau-game-select"></select>
@@ -1151,19 +1328,27 @@
                   <span class="dau-tooltip-label"></span>
                 </div>
               </div>
-              <p class="dau-chart-caption">* 실시간 시계열 데이터가 충분히 누적되기 전까지 표시되는 임시 샘플 그래프입니다.</p>
+              <p class="dau-chart-caption" id="dauChartCaption" style="display: none;"></p>
             </div>
 
-            <div class="genre-pills" id="genrePills" style="display: none;"></div>
+            <div class="genre-filter" id="genreFilter" style="display: none;">
+              <button type="button" class="genre-filter-trigger" id="genreFilterTrigger">
+                <span id="genreFilterLabel">카테고리: 전체</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div class="genre-dropdown" id="genrePills" style="display: none;"></div>
+            </div>
             <div class="trends-grid" id="trendsGrid"></div>
+            <div class="news-feed" id="newsFeed" style="display: none;"></div>
             <p id="trendsEmptyState" style="display: none; color: var(--text-muted); font-size: 14px;">표시할 데이터가 없습니다.</p>
+            <button type="button" id="loadMoreBtn" class="load-more-btn" style="display: none;">더보기</button>
           </div>
 
           <aside class="side-card">
-            <p class="tag-label">OVERVIEW SIGNAL</p>
-            <h2>패치와 할인 이후, 협동 게임의 활동 신호가 뚜렷합니다.</h2>
-            <p id="globalSignalDesc">유저를 검색하면 친구 네트워크와 글로벌 흐름을 함께 비교할 수 있습니다.</p>
-            <div class="side-card-foot">Steam 공개 API · 조회 시점 기준</div>
+            <p class="tag-label">TOP 10 · 인기 게임</p>
+            <h2 style="font-size: 16px; margin-top: 12px;">지금 가장 많이 플레이되는 게임</h2>
+            <ol class="top-games-list" id="topGamesList"></ol>
+            <div class="side-card-foot">Steam 공개 API · 15분 주기 수집 기준</div>
           </aside>
         </div>
       </div>
@@ -1184,8 +1369,12 @@
       selectedFriendIndex: 0,
       activeFriendTab: 'recent',
       activeGlobalTab: 'overview',
-      activeGenre: null
+      activeGenre: null,
+      trendsLimit: 8
     };
+
+    const TRENDS_LIMIT_STEP = 8;
+    const TRENDS_LIMIT_MAX = 40;
 
     // Static Data
     const friendsData = [
@@ -1237,12 +1426,37 @@
 
     const trendsGrid = document.getElementById('trendsGrid');
     const trendsEmptyState = document.getElementById('trendsEmptyState');
+    const genreFilter = document.getElementById('genreFilter');
+    const genreFilterTrigger = document.getElementById('genreFilterTrigger');
+    const genreFilterLabel = document.getElementById('genreFilterLabel');
     const genrePills = document.getElementById('genrePills');
-    const globalSignalDesc = document.getElementById('globalSignalDesc');
+    const topGamesList = document.getElementById('topGamesList');
+    const newsFeed = document.getElementById('newsFeed');
+    const loadMoreBtn = document.getElementById('loadMoreBtn');
     let allGenres = [];
+    let newsFeedData = [];
+
+    loadMoreBtn.addEventListener('click', () => {
+      state.trendsLimit = Math.min(state.trendsLimit + TRENDS_LIMIT_STEP, TRENDS_LIMIT_MAX);
+      loadTrendGames();
+    });
+
+    genreFilterTrigger.addEventListener('click', () => {
+      const isOpen = genrePills.style.display === 'flex';
+      genrePills.style.display = isOpen ? 'none' : 'flex';
+      genreFilterTrigger.classList.toggle('open', !isOpen);
+    });
+
+    document.addEventListener('click', (evt) => {
+      if (!genreFilter.contains(evt.target)) {
+        genrePills.style.display = 'none';
+        genreFilterTrigger.classList.remove('open');
+      }
+    });
 
     const dauChartPanel = document.getElementById('dauChartPanel');
     const dauChartTitle = document.getElementById('dauChartTitle');
+    const dauChartCaption = document.getElementById('dauChartCaption');
     const dauGameSelect = document.getElementById('dauGameSelect');
     const dauChartSvg = document.getElementById('dauChartSvg');
     const dauTooltip = document.getElementById('dauTooltip');
@@ -1464,34 +1678,8 @@
       });
     });
 
-    // DAU Chart (샘플 시계열 데이터 - 실데이터 누적 전까지 임시)
-    function seededRandom(seedStr) {
-      let h = 0;
-      for (let i = 0; i < seedStr.length; i++) h = (h * 31 + seedStr.charCodeAt(i)) >>> 0;
-      return function () {
-        h = (h * 1664525 + 1013904223) >>> 0;
-        return h / 4294967296;
-      };
-    }
-
-    function generateMockSeries(game) {
-      const base = game.active_raw || 50000;
-      const rand = seededRandom(`${game.name}-${game.appid}`);
-      const now = new Date();
-      const points = [];
-      for (let i = 23; i >= 0; i--) {
-        const t = new Date(now.getTime() - i * 60 * 60 * 1000);
-        const hour = t.getHours();
-        const wave = 0.6 + 0.4 * Math.sin(((hour - 6) / 24) * Math.PI * 2 - Math.PI / 2);
-        const noise = 0.9 + rand() * 0.2;
-        points.push({
-          label: `${String(hour).padStart(2, '0')}:00`,
-          value: Math.max(0, Math.round(base * wave * noise))
-        });
-      }
-      return points;
-    }
-
+    // DAU Chart: game_chart_rankings에 쌓인 실데이터를 우선 쓰고,
+    // 아직 수집되지 않은 시간대만 서버가 현재 값 기준으로 추정치를 채워 보낸다 (/api/trends/timeseries).
     function populateDauGameSelect() {
       const previousValue = dauGameSelect.value;
       dauGameSelect.innerHTML = '';
@@ -1510,11 +1698,45 @@
       return trendGames.find((g, i) => String(g.appid != null ? g.appid : i) === val) || trendGames[0];
     }
 
-    function renderDauChart(game) {
-      if (!game) return;
+    const dauSeriesCache = {};
+
+    async function renderDauChart(game) {
+      if (!game || game.appid == null) return;
       dauChartTitle.textContent = `${game.name} · 동시 접속자 추이`;
 
-      const points = generateMockSeries(game);
+      let points, source;
+      if (dauSeriesCache[game.appid]) {
+        ({ points, source } = dauSeriesCache[game.appid]);
+      } else {
+        try {
+          const res = await fetch(`/api/trends/timeseries?appid=${game.appid}&hours=24`);
+          if (!res.ok) throw new Error(`WAS API Error (HTTP ${res.status})`);
+          const data = await res.json();
+          points = data.points || [];
+          source = data.source || 'estimated';
+          dauSeriesCache[game.appid] = { points, source };
+        } catch (err) {
+          console.warn('WAS Timeseries API call failed:', err);
+          points = [];
+          source = 'estimated';
+        }
+      }
+
+      if (source === 'real') {
+        dauChartCaption.style.display = 'none';
+      } else {
+        dauChartCaption.style.display = 'block';
+        dauChartCaption.textContent = source === 'mixed'
+          ? '* 점선 구간은 아직 수집되지 않아 현재 값 기준으로 추정한 구간입니다.'
+          : '* 아직 실데이터가 부족해 현재 값 기준으로 추정한 그래프입니다.';
+      }
+
+      // getSelectedDauGame()이 트렌드 목록이 아직 없을 때 호출되면 points가 비어 올 수 있음
+      if (points.length === 0) {
+        dauChartSvg.innerHTML = '';
+        return;
+      }
+
       const width = 640, height = 220;
       const padding = { top: 16, right: 16, bottom: 28, left: 56 };
       const innerW = width - padding.left - padding.right;
@@ -1526,8 +1748,17 @@
       const xAt = i => padding.left + (innerW * i) / (points.length - 1);
       const yAt = v => padding.top + innerH - (innerH * v) / niceMax;
 
-      const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(1)} ${yAt(p.value).toFixed(1)}`).join(' ');
-      const areaPath = `${linePath} L ${xAt(points.length - 1).toFixed(1)} ${(padding.top + innerH).toFixed(1)} L ${xAt(0).toFixed(1)} ${(padding.top + innerH).toFixed(1)} Z`;
+      const areaLinePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(1)} ${yAt(p.value).toFixed(1)}`).join(' ');
+      const areaPath = `${areaLinePath} L ${xAt(points.length - 1).toFixed(1)} ${(padding.top + innerH).toFixed(1)} L ${xAt(0).toFixed(1)} ${(padding.top + innerH).toFixed(1)} Z`;
+
+      // 실데이터 구간은 실선, 추정치가 섞인 구간은 점선으로 구분해서 그린다.
+      let lineSegments = '';
+      for (let i = 0; i < points.length - 1; i++) {
+        const isEstimatedSegment = points[i].estimated || points[i + 1].estimated;
+        const d = `M ${xAt(i).toFixed(1)} ${yAt(points[i].value).toFixed(1)} L ${xAt(i + 1).toFixed(1)} ${yAt(points[i + 1].value).toFixed(1)}`;
+        const dashAttr = isEstimatedSegment ? 'stroke-dasharray="5 4" stroke-opacity="0.55"' : '';
+        lineSegments += `<path d="${d}" fill="none" stroke="var(--cyan-bright)" stroke-width="2" stroke-linecap="round" ${dashAttr} />`;
+      }
 
       let gridLines = '';
       const gridSteps = 4;
@@ -1548,7 +1779,7 @@
       dauChartSvg.innerHTML = `
         ${gridLines}
         <path d="${areaPath}" fill="var(--cyan-bright)" fill-opacity="0.1" stroke="none" />
-        <path d="${linePath}" fill="none" stroke="var(--cyan-bright)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        ${lineSegments}
         <circle cx="${xAt(points.length - 1).toFixed(1)}" cy="${yAt(last.value).toFixed(1)}" r="4" fill="var(--cyan-bright)" stroke="var(--card-bg)" stroke-width="2" />
         ${xLabels}
         <g id="dauCrosshair" style="display:none;">
@@ -1578,7 +1809,7 @@
         dauTooltip.style.opacity = '1';
         dauTooltip.style.left = `${(px / width) * 100}%`;
         dauTooltip.style.top = `${(py / height) * 100}%`;
-        dauTooltip.querySelector('.dau-tooltip-value').textContent = `${p.value.toLocaleString()}명`;
+        dauTooltip.querySelector('.dau-tooltip-value').textContent = `${p.value.toLocaleString()}명${p.estimated ? ' (추정)' : ''}`;
         dauTooltip.querySelector('.dau-tooltip-label').textContent = p.label;
       }
 
@@ -1595,17 +1826,13 @@
 
     // Render Global Page
     function renderGlobalPage() {
-      if (state.activeUser) {
-        globalSignalDesc.textContent = `${state.activeUser}님의 친구 네트워크에서도 협동 장르의 최근 플레이가 글로벌 평균보다 높습니다.`;
-      } else {
-        globalSignalDesc.textContent = '유저를 검색하면 친구 네트워크와 글로벌 흐름을 함께 비교할 수 있습니다.';
-      }
-
       const isOverview = state.activeGlobalTab === 'overview';
-      const inlineImageTabs = ['popular', 'discount', 'rising', 'category'];
+      const isNews = state.activeGlobalTab === 'news';
+      const genreFilterTabs = ['popular', 'discount', 'rising'];
+      const inlineImageTabs = ['popular', 'discount', 'rising'];
 
-      genrePills.style.display = state.activeGlobalTab === 'category' ? 'flex' : 'none';
-      if (state.activeGlobalTab === 'category') renderGenrePills();
+      genreFilter.style.display = genreFilterTabs.includes(state.activeGlobalTab) ? 'inline-block' : 'none';
+      if (genreFilterTabs.includes(state.activeGlobalTab)) renderGenrePills();
 
       dauChartPanel.style.display = isOverview && trendGames && trendGames.length > 0 ? 'block' : 'none';
       if (isOverview && trendGames && trendGames.length > 0) {
@@ -1613,23 +1840,20 @@
         renderDauChart(getSelectedDauGame());
       }
 
-      if (state.activeGlobalTab === 'news') {
-        trendsGrid.innerHTML = '';
-        trendsEmptyState.textContent = '뉴스 · 패치 탭은 아직 준비 중입니다.';
-        trendsEmptyState.style.display = 'block';
+      if (isNews) {
+        trendsGrid.style.display = 'none';
+        newsFeed.style.display = 'flex';
+        renderNewsFeed();
         return;
       }
-
-      if (state.activeGlobalTab === 'category' && !state.activeGenre) {
-        trendsGrid.innerHTML = '';
-        trendsEmptyState.textContent = '위에서 장르를 선택하면 해당 장르의 게임을 보여드립니다.';
-        trendsEmptyState.style.display = 'block';
-        return;
-      }
+      trendsGrid.style.display = 'grid';
+      newsFeed.style.display = 'none';
 
       if (!trendGames || trendGames.length === 0) {
         trendsGrid.innerHTML = '';
-        trendsEmptyState.textContent = '표시할 데이터가 없습니다. 15분 주기 수집이 아직 진행 중일 수 있습니다.';
+        trendsEmptyState.textContent = state.activeGenre
+          ? `선택한 장르(${state.activeGenre})에 해당하는 게임이 아직 없습니다.`
+          : '표시할 데이터가 없습니다. 15분 주기 수집이 아직 진행 중일 수 있습니다.';
         trendsEmptyState.style.display = 'block';
         return;
       }
@@ -1673,23 +1897,43 @@
       }).join('');
     }
 
+    // 카테고리(장르) 필터 - 인기순/할인순/급상승/뉴스 탭 아래, 버튼 클릭 시 스크롤 가능한 드롭다운으로 선택
+    function selectGenre(name) {
+      state.activeGenre = name;
+      state.trendsLimit = TRENDS_LIMIT_STEP;
+      genrePills.style.display = 'none';
+      genreFilterTrigger.classList.remove('open');
+      loadTrendGames();
+    }
+
     function renderGenrePills() {
+      genreFilterLabel.textContent = `카테고리: ${state.activeGenre || '전체'}`;
+      genrePills.innerHTML = '';
+
       if (allGenres.length === 0) {
-        genrePills.innerHTML = '<span style="color: var(--text-dim); font-size: 12px;">장르 불러오는 중...</span>';
+        const loading = document.createElement('span');
+        loading.style.cssText = 'color: var(--text-dim); font-size: 12px;';
+        loading.textContent = '장르 불러오는 중...';
+        genrePills.appendChild(loading);
         return;
       }
-      genrePills.innerHTML = allGenres.map(name => `
-        <button class="genre-pill ${state.activeGenre === name ? 'active' : ''}" data-genre="${name}">${name}</button>
-      `).join('');
-      genrePills.querySelectorAll('[data-genre]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          state.activeGenre = btn.dataset.genre;
-          loadTrendGames();
-        });
+
+      const allBtn = document.createElement('button');
+      allBtn.className = `genre-pill ${!state.activeGenre ? 'active' : ''}`;
+      allBtn.textContent = '전체';
+      allBtn.addEventListener('click', () => selectGenre(null));
+      genrePills.appendChild(allBtn);
+
+      allGenres.forEach(name => {
+        const btn = document.createElement('button');
+        btn.className = `genre-pill ${state.activeGenre === name ? 'active' : ''}`;
+        btn.textContent = name;
+        btn.addEventListener('click', () => selectGenre(name));
+        genrePills.appendChild(btn);
       });
     }
 
-    // WAS API Call: 장르 목록 (카테고리 탭용, 최초 1회만 조회)
+    // WAS API Call: 장르 목록 (최초 1회만 조회, 여러 탭에서 공유)
     async function loadGenres() {
       if (allGenres.length > 0) return;
       try {
@@ -1697,36 +1941,140 @@
         if (!res.ok) throw new Error(`WAS API Error (HTTP ${res.status})`);
         const data = await res.json();
         allGenres = data.genres || [];
-        if (state.activeGlobalTab === 'category') renderGenrePills();
+        renderGenrePills();
       } catch (err) {
         console.warn('WAS Genres API call failed:', err);
       }
     }
 
-    // WAS API Call for Global Trend Games (15분 주기로 수집된 실데이터, 탭별 정렬/필터)
+    // WAS API Call: 사이드바 TOP 10 인기 게임 (탭 전환과 무관하게 최초 1회만 조회)
+    async function loadTopGames() {
+      try {
+        const res = await fetch('/api/trends?tab=popular&limit=10');
+        if (!res.ok) throw new Error(`WAS API Error (HTTP ${res.status})`);
+        const data = await res.json();
+        renderTopGames(data.trends || []);
+      } catch (err) {
+        console.warn('WAS Top Games API call failed:', err);
+      }
+    }
+
+    function renderTopGames(games) {
+      if (!games || games.length === 0) {
+        topGamesList.innerHTML = '<li style="color: var(--text-dim); font-size: 12px;">아직 집계된 데이터가 없습니다.</li>';
+        return;
+      }
+      topGamesList.innerHTML = games.map((g, i) => `
+        <li>
+          <span class="rank">${i + 1}</span>
+          <span class="name">${g.name}</span>
+          <span class="count">${g.active}</span>
+        </li>
+      `).join('');
+    }
+
+    // WAS API Call: 뉴스 · 패치 탭 - 카테고리별 게임 묶음 (최초 1회만 조회)
+    // WAS API Call: 뉴스 · 패치 탭 - 인기 게임의 실제 공식 뉴스/패치노트 (최초 1회만 조회)
+    async function loadNewsFeed() {
+      if (newsFeedData.length > 0) {
+        renderGlobalPage();
+        return;
+      }
+      try {
+        const res = await fetch('/api/news');
+        if (!res.ok) throw new Error(`WAS API Error (HTTP ${res.status})`);
+        const data = await res.json();
+        newsFeedData = data.news || [];
+      } catch (err) {
+        console.warn('WAS News API call failed:', err);
+        newsFeedData = [];
+      }
+      renderGlobalPage();
+    }
+
+    // 게임 이름/뉴스 제목/요약은 Steam 커뮤니티가 작성한 외부 콘텐츠이므로
+    // innerHTML 문자열 조립 대신 DOM + textContent로 안전하게 삽입한다.
+    function renderNewsFeed() {
+      newsFeed.innerHTML = '';
+
+      if (newsFeedData.length === 0) {
+        trendsEmptyState.textContent = '표시할 뉴스가 아직 없습니다.';
+        trendsEmptyState.style.display = 'block';
+        return;
+      }
+      trendsEmptyState.style.display = 'none';
+
+      newsFeedData.forEach(item => {
+        const card = document.createElement('article');
+        card.className = 'news-card';
+
+        if (item.header_image) {
+          const img = document.createElement('img');
+          img.className = 'news-thumb';
+          img.src = item.header_image;
+          img.alt = item.game_name || '';
+          img.loading = 'lazy';
+          card.appendChild(img);
+        }
+
+        const body = document.createElement('div');
+        body.className = 'news-body';
+
+        const meta = document.createElement('p');
+        meta.className = 'news-meta';
+        const gameSpan = document.createElement('span');
+        gameSpan.className = 'news-game';
+        gameSpan.textContent = item.game_name || '';
+        meta.appendChild(gameSpan);
+        if (item.date_unix) {
+          meta.appendChild(document.createTextNode(' · ' + new Date(item.date_unix * 1000).toLocaleDateString('ko-KR')));
+        }
+        body.appendChild(meta);
+
+        const titleLink = document.createElement('a');
+        titleLink.className = 'news-title';
+        titleLink.href = item.url || '#';
+        titleLink.target = '_blank';
+        titleLink.rel = 'noopener noreferrer';
+        titleLink.textContent = item.title || '(제목 없음)';
+        body.appendChild(titleLink);
+
+        if (item.summary) {
+          const summary = document.createElement('p');
+          summary.className = 'news-summary';
+          summary.textContent = item.summary;
+          body.appendChild(summary);
+        }
+
+        card.appendChild(body);
+        newsFeed.appendChild(card);
+      });
+    }
+
+    // WAS API Call for Global Trend Games (15분 주기로 수집된 실데이터, 탭별 정렬/필터 + 선택적 장르 필터)
     async function loadTrendGames() {
       const tab = state.activeGlobalTab;
 
       if (tab === 'news') {
-        renderGlobalPage();
-        return;
-      }
-      if (tab === 'category' && !state.activeGenre) {
-        renderGlobalPage();
+        loadMoreBtn.style.display = 'none';
+        loadNewsFeed();
         return;
       }
 
       try {
-        const params = new URLSearchParams({ tab, limit: tab === 'category' ? '12' : '4' });
-        if (tab === 'category') params.set('genre', state.activeGenre);
+        const params = new URLSearchParams({ tab, limit: String(state.trendsLimit) });
+        if (state.activeGenre) params.set('genre', state.activeGenre);
 
         const res = await fetch(`/api/trends?${params.toString()}`);
         if (!res.ok) throw new Error(`WAS API Error (HTTP ${res.status})`);
         const data = await res.json();
         trendGames = data.trends || [];
+        loadMoreBtn.style.display =
+          (trendGames.length >= state.trendsLimit && state.trendsLimit < TRENDS_LIMIT_MAX) ? 'block' : 'none';
         renderGlobalPage();
       } catch (err) {
         console.warn('WAS Trends API call failed, using fallback:', err);
+        loadMoreBtn.style.display = 'none';
         renderGlobalPage();
       }
     }
@@ -1737,7 +2085,10 @@
         document.querySelectorAll('[data-global-tab]').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         state.activeGlobalTab = btn.dataset.globalTab;
-        if (state.activeGlobalTab === 'category') loadGenres();
+        state.trendsLimit = TRENDS_LIMIT_STEP;
+        genrePills.style.display = 'none';
+        genreFilterTrigger.classList.remove('open');
+        loadGenres();
         loadTrendGames();
       });
     });
@@ -1745,6 +2096,7 @@
     // Initialize Default State
     renderGlobalPage();
     loadTrendGames();
+    loadTopGames();
   </script>
 </body>
 
