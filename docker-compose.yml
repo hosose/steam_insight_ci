@@ -1,0 +1,19 @@
+services:
+  was-service:
+    build:
+      context: ./apps/was
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+    ports:
+      - "3080:80"
+    depends_on:
+      - was-service
+    restart: unless-stopped

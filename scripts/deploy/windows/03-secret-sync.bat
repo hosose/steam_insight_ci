@@ -25,7 +25,7 @@ aws secretsmanager get-secret-value ^
   --output text > "%SECRET_JSON_FILE%"
 if errorlevel 1 goto :error
 
-%PYTHON_CMD% -c "import json,pathlib; d=json.loads(pathlib.Path(r'%SECRET_JSON_FILE%').read_text(encoding='utf-8')); lines=['DB_HOST=%RDS_HOST%','DB_PORT=%RDS_PORT%','DB_NAME=%RDS_DB_NAME%','DB_USER='+d['username'],'DB_PASSWORD='+d['password']]; pathlib.Path(r'%DB_ENV_FILE%').write_text('\n'.join(lines)+'\n', encoding='utf-8')"
+%PYTHON_CMD% -c "import json, os, pathlib; d=json.loads(pathlib.Path(r'%SECRET_JSON_FILE%').read_text(encoding='utf-8')); lines=['DB_HOST=%RDS_HOST%','DB_PORT=%RDS_PORT%','DB_NAME=%RDS_DB_NAME%','DB_USER='+d['username'],'DB_PASSWORD='+d['password']]; env_files=[os.path.join(r'%PROJECT_ROOT%', '.env'), os.path.join(r'%PROJECT_ROOT%', 'Steam_Insight_Dashboard', '.env')]; [lines.append(f'{k}={v}') for ef in env_files if os.path.exists(ef) for line in pathlib.Path(ef).read_text(encoding='utf-8').splitlines() if '=' in line and not line.strip().startswith('#') for k, v in [line.strip().split('=', 1)] for k, v in [(k.strip(), v.strip().strip('\"').strip('\''))] if k in ['STEAM_API_KEY', 'Bedrock_API_Key', 'BEDROCK_API_KEY'] and v]; pathlib.Path(r'%DB_ENV_FILE%').write_text('\n'.join(lines)+'\n', encoding='utf-8')"
 if errorlevel 1 goto :error
 
 kubectl create namespace "%APP_NAMESPACE%" --dry-run=client -o yaml | kubectl apply -f -
