@@ -175,13 +175,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 게임 차트/장르 수집기(동기 pymysql 기반, db.py+collector.py)는 위 aiomysql 풀과는
     # 별개 커넥션을 쓴다 — 15분 주기 배치라 굳이 커넥션 풀을 공유할 필요가 없어 단순하게 유지.
+    #
+    # K8s에서는 WAS 파드가 DB 파드/RDS보다 먼저 뜨는 경우가 있어(콜드스타트 레이스),
+    # 최초 시도가 실패하면 그대로 넘어가 game_chart_rankings 등 테이블이 영영 생성되지
+    # 않는 문제가 있었다 — 짧게 재시도해서 이 창을 흡수한다.
     if os.getenv("DB_HOST"):
-        try:
-            with closing(db_connection()) as connection:
-                init_db_tables(connection)
-                print("Collector DB tables (game_chart_rankings, game_info, genres, ...) initialized.")
-        except Exception as e:
-            print(f"Startup collector DB init warning: {e}")
+        DB_INIT_RETRIES = 5
+        DB_INIT_RETRY_DELAY_SECONDS = 3
+        for attempt in range(1, DB_INIT_RETRIES + 1):
+            try:
+                with closing(db_connection()) as connection:
+                    init_db_tables(connection)
+                    print("Collector DB tables (game_chart_rankings, game_info, genres, ...) initialized.")
+                break
+            except Exception as e:
+                print(f"Startup collector DB init warning (attempt {attempt}/{DB_INIT_RETRIES}): {e}")
+                if attempt < DB_INIT_RETRIES:
+                    await asyncio.sleep(DB_INIT_RETRY_DELAY_SECONDS)
     asyncio.create_task(chart_collection_loop())
 
     yield
