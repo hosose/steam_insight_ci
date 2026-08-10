@@ -265,7 +265,7 @@ def get_user_owned_appids(steam_api_key: str, steam_id: str) -> set:
     except Exception:
         return set()
 
-def fetch_friend_real_stats(steam_api_key: str, friend_steam_id: str, owner_appids: set) -> dict:
+async def fetch_friend_real_stats(client: httpx.AsyncClient, steam_api_key: str, friend_steam_id: str, owner_appids: set, sem: asyncio.Semaphore) -> dict:
     stats = {
         "twoWeeks": "0h", "twoWeeks_minutes": 0,
         "total": "0h", "total_hours": 0,
@@ -275,67 +275,68 @@ def fetch_friend_real_stats(steam_api_key: str, friend_steam_id: str, owner_appi
     if not steam_api_key or not friend_steam_id:
         return stats
 
-    try:
-        recent_url = f"https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/?key={steam_api_key}&steamid={friend_steam_id}&count=5"
-        res_rec = httpx.get(recent_url, timeout=12.0).json()
-        recent_games = res_rec.get("response", {}).get("games", [])
-        if recent_games:
-            total_2w_min = sum(g.get("playtime_2weeks", 0) for g in recent_games)
-            stats["twoWeeks_minutes"] = total_2w_min
-            stats["twoWeeks"] = f"{round(total_2w_min / 60, 1)}h"
-            stats["game"] = recent_games[0].get("name", "Steam Game")
-            stats["recent_games_list"] = [
-                {"name": g.get("name", "Steam Game"), "hours": f"{round(g.get('playtime_2weeks', 0) / 60, 1)}h"}
-                for g in recent_games[:3]
-            ]
-    except Exception:
-        pass
+    async with sem:
+        try:
+            recent_url = f"{STEAM_API_BASE}/IPlayerService/GetRecentlyPlayedGames/v1/?key={steam_api_key}&steamid={friend_steam_id}&count=5"
+            res_rec = (await client.get(recent_url, timeout=4.0)).json()
+            recent_games = res_rec.get("response", {}).get("games", [])
+            if recent_games:
+                total_2w_min = sum(g.get("playtime_2weeks", 0) for g in recent_games)
+                stats["twoWeeks_minutes"] = total_2w_min
+                stats["twoWeeks"] = f"{round(total_2w_min / 60, 1)}h"
+                stats["game"] = recent_games[0].get("name", "Steam Game")
+                stats["recent_games_list"] = [
+                    {"name": g.get("name", "Steam Game"), "hours": f"{round(g.get('playtime_2weeks', 0) / 60, 1)}h"}
+                    for g in recent_games[:3]
+                ]
+        except Exception:
+            pass
 
-    try:
-        games_url = f"https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key={steam_api_key}&steamid={friend_steam_id}&include_appinfo=1"
-        res_g = httpx.get(games_url, timeout=12.0).json()
-        games_list = res_g.get("response", {}).get("games", [])
-        if games_list:
-            total_min = sum(g.get("playtime_forever", 0) for g in games_list)
-            tot_hours = round(total_min / 60)
-            stats["total_hours"] = tot_hours
-            stats["total"] = f"{tot_hours:,}h"
+        try:
+            games_url = f"{STEAM_API_BASE}/IPlayerService/GetOwnedGames/v1/?key={steam_api_key}&steamid={friend_steam_id}&include_appinfo=1"
+            res_g = (await client.get(games_url, timeout=4.0)).json()
+            games_list = res_g.get("response", {}).get("games", [])
+            if games_list:
+                total_min = sum(g.get("playtime_forever", 0) for g in games_list)
+                tot_hours = round(total_min / 60)
+                stats["total_hours"] = tot_hours
+                stats["total"] = f"{tot_hours:,}h"
 
-            friend_appids_map = {g["appid"]: g.get("name", "Steam Game") for g in games_list if "appid" in g}
-            friend_appids = set(friend_appids_map.keys())
+                friend_appids_map = {g["appid"]: g.get("name", "Steam Game") for g in games_list if "appid" in g}
+                friend_appids = set(friend_appids_map.keys())
 
-            if owner_appids:
-                shared_appids = owner_appids.intersection(friend_appids)
-                stats["shared_count"] = len(shared_appids)
-                stats["shared"] = f"{len(shared_appids)}개"
-                stats["shared_games"] = [friend_appids_map[aid] for aid in list(shared_appids)[:4] if aid in friend_appids_map]
+                if owner_appids:
+                    shared_appids = owner_appids.intersection(friend_appids)
+                    stats["shared_count"] = len(shared_appids)
+                    stats["shared"] = f"{len(shared_appids)}개"
+                    stats["shared_games"] = [friend_appids_map[aid] for aid in list(shared_appids)[:4] if aid in friend_appids_map]
 
-            top_games = sorted(games_list, key=lambda g: g.get("playtime_forever", 0), reverse=True)[:3]
-            unlocked_cnt = 0
-            avail_cnt = 0
+                top_games = sorted(games_list, key=lambda g: g.get("playtime_forever", 0), reverse=True)[:3]
+                unlocked_cnt = 0
+                avail_cnt = 0
 
-            for g in top_games:
-                appid = g.get("appid")
-                if not appid:
-                    continue
-                try:
-                    ach_url = f"https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?key={steam_api_key}&steamid={friend_steam_id}&appid={appid}"
-                    res_ach = httpx.get(ach_url, timeout=10.0).json()
-                    ach_list = res_ach.get("playerstats", {}).get("achievements", [])
-                    if ach_list:
-                        avail_cnt += len(ach_list)
-                        unlocked_cnt += sum(1 for a in ach_list if a.get("achieved") == 1)
-                except Exception:
-                    continue
+                for g in top_games:
+                    appid = g.get("appid")
+                    if not appid:
+                        continue
+                    try:
+                        ach_url = f"https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?key={steam_api_key}&steamid={friend_steam_id}&appid={appid}"
+                        res_ach = httpx.get(ach_url, timeout=10.0).json()
+                        ach_list = res_ach.get("playerstats", {}).get("achievements", [])
+                        if ach_list:
+                            avail_cnt += len(ach_list)
+                            unlocked_cnt += sum(1 for a in ach_list if a.get("achieved") == 1)
+                    except Exception:
+                        continue
 
-            if avail_cnt > 0:
-                stats["achievement"] = f"{round(unlocked_cnt / avail_cnt * 100)}%"
-            else:
-                stats["achievement"] = "비공개"
-    except Exception:
-        pass
+                if avail_cnt > 0:
+                    stats["achievement"] = f"{round(unlocked_cnt / avail_cnt * 100)}%"
+                else:
+                    stats["achievement"] = "비공개"
+        except Exception:
+            pass
 
-    return stats
+        return stats
 
 # ---------------------------------------------------------------------------
 # API 엔드포인트
@@ -459,9 +460,11 @@ async def get_user_friends(username: str, request: Request) -> dict:
                 res_s = (await client.get(summaries_url)).json()
                 players = res_s.get("response", {}).get("players", [])
 
-                def process_player(p):
+                sem = asyncio.Semaphore(8)
+                
+                async def process_player(p):
                     f_steam_id = p.get("steamid", "")
-                    f_stats = fetch_friend_real_stats(steam_api_key, f_steam_id, owner_appids)
+                    f_stats = await fetch_friend_real_stats(client, steam_api_key, f_steam_id, owner_appids, sem)
                     return {
                         "steam_id": f_steam_id,
                         "name": p.get("personaname", "Steam Friend"),
@@ -483,7 +486,7 @@ async def get_user_friends(username: str, request: Request) -> dict:
 
                 if players:
                     with ThreadPoolExecutor(max_workers=5) as executor:
-                        real_friends = list(executor.map(process_player, players))
+                        real_friends = await asyncio.gather(*(process_player(p) for p in players))
         except Exception as e:
             print(f"Real Steam Friends API fetch failed: {e}")
 
