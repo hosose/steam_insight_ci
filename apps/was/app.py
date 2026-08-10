@@ -17,7 +17,6 @@ from fastapi import FastAPI, HTTPException, Request
 
 from db import db_connection, init_db_tables
 from steam_api import fetch_app_news, clean_news_summary
-from collector import chart_collection_loop
 
 KST_OFFSET = timedelta(hours=9)  # 한국은 DST 없이 UTC+9 고정이라 오프셋 상수로 충분함
 
@@ -173,12 +172,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.http_client = None
     app.state.http_client_lock = asyncio.Lock()
 
-    # 게임 차트/장르 수집기(동기 pymysql 기반, db.py+collector.py)는 위 aiomysql 풀과는
-    # 별개 커넥션을 쓴다 — 15분 주기 배치라 굳이 커넥션 풀을 공유할 필요가 없어 단순하게 유지.
+    # 수집기 스키마(game_chart_rankings 등)는 WAS 자신의 읽기 엔드포인트(/api/trends 등)에도
+    # 필요하므로 여기서 계속 보장한다. CREATE TABLE IF NOT EXISTS라 여러 WAS 레플리카가
+    # 동시에 불러도 안전하다.
     #
     # K8s에서는 WAS 파드가 DB 파드/RDS보다 먼저 뜨는 경우가 있어(콜드스타트 레이스),
     # 최초 시도가 실패하면 그대로 넘어가 game_chart_rankings 등 테이블이 영영 생성되지
     # 않는 문제가 있었다 — 짧게 재시도해서 이 창을 흡수한다.
+    #
+    # 실제 15분 주기 수집(Steam API 호출/DB 쓰기)은 여기서 돌리지 않는다 — WAS가
+    # 레플리카 여러 개로 뜨면 각자 따로 수집기를 돌려서 API를 N배 호출하고 DB에도
+    # 동시에 써서 경합이 생긴다. 수집은 별도 K8s CronJob(`python collector.py`, 단발
+    # 실행 후 종료, concurrencyPolicy: Forbid)이 전담한다.
     if os.getenv("DB_HOST"):
         DB_INIT_RETRIES = 5
         DB_INIT_RETRY_DELAY_SECONDS = 3
@@ -192,7 +197,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 print(f"Startup collector DB init warning (attempt {attempt}/{DB_INIT_RETRIES}): {e}")
                 if attempt < DB_INIT_RETRIES:
                     await asyncio.sleep(DB_INIT_RETRY_DELAY_SECONDS)
-    asyncio.create_task(chart_collection_loop())
 
     yield
     if app.state.db_pool is not None:
