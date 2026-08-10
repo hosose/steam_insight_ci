@@ -73,7 +73,7 @@ for /L %%N in (1,1,30) do (
     echo [OK] !CHECK_NAME! health check
     exit /b 0
   )
-  timeout /t 1 /nobreak >nul
+  ping 127.0.0.1 -n 2 >nul
 )
 echo [ERROR] !CHECK_NAME! health check failed: !CHECK_URL!
 exit /b 1
