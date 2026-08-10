@@ -1,81 +1,94 @@
+import asyncio
+import json
 import os
-import socket
 import random
-from contextlib import closing
+import re
+import socket
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
-import pymysql
-from fastapi import FastAPI, HTTPException
+# pyrefly: ignore [missing-import]
+import aiomysql
+# pyrefly: ignore [missing-import]
+import httpx
+from fastapi import FastAPI, HTTPException, Request
 
-def load_env_file():
-    possible_paths = [
-        os.path.join(os.path.dirname(__file__), ".env"),
-        os.path.join(os.getcwd(), ".env"),
-    ]
-    for p in possible_paths:
-        if os.path.exists(p):
-            try:
-                with open(p, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            k, v = line.split("=", 1)
-                            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-            except Exception as e:
-                print(f"Error loading .env file from {p}: {e}")
+# ---------------------------------------------------------------------------
+# Mock 데이터 (Steam / Bedrock API 키가 없는 환경 — 로컬 무설정 실행, CI 헬스체크 등 — 의 폴백)
+# ---------------------------------------------------------------------------
 
-load_env_file()
+PLAYSTYLES = [
+    "탐험형 협동 플레이어",
+    "경쟁형 FPS 마스터",
+    "몰입형 RPG 스토커",
+    "샌드박스 크래프터",
+    "하드코어 생존 전문가",
+    "전략 시뮬레이션 지휘관",
+]
 
-# Steam API Key (없을 시 모의/공개 XML 프로필 데이터로 작동)
-STEAM_API_KEY = os.getenv("STEAM_API_KEY")
+INSIGHTS = [
+    "전략·생존 장르를 중심으로 오래 플레이하며, 최근에는 친구와 즐기는 협동 게임 비중이 높아졌습니다.",
+    "경쟁 슈팅 게임에서 높은 K/D 지표를 기록하며 최신 FPS 메타를 빠르게 파악하는 스타일입니다.",
+    "스토리 중심 RPG 게임의 모든 수집 요소와 멀티 엔딩을 탐색하는 완벽주의 플레이어입니다.",
+    "자유도 높은 샌드박스와 건축·자동화 시스템 구축에 많은 플레이 타임을 투자하고 있습니다.",
+    "친구 네트워크와 함께 공포·협동 파티 게임을 주로 즐기며 주기적으로 신작을 탐색합니다.",
+]
 
-def init_db_tables(connection):
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS steam_user_profiles (
-                steam_id VARCHAR(64) PRIMARY KEY,
-                username VARCHAR(255) NOT NULL,
-                personaname VARCHAR(255),
-                avatar_url TEXT,
-                games_count INT DEFAULT 0,
-                play_hours INT DEFAULT 0,
-                achievement_rate INT DEFAULT 0,
-                friends_count INT DEFAULT 0,
-                playstyle VARCHAR(255),
-                insight TEXT,
-                source VARCHAR(50) DEFAULT 'MOCK',
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS search_history (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                search_query VARCHAR(255) NOT NULL,
-                steam_id VARCHAR(64),
-                searched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
+FRIEND_TRAITS = [
+    "경쟁 FPS와 협동 공포를 오가는 하이브리드 플레이어",
+    "새로운 슈팅 게임의 메타를 빠르게 탐색하는 정밀 플레이어",
+    "경쟁 게임과 장기 몰입형 RPG를 함께 즐기는 집중형 플레이어",
+    "커뮤니티와 함께 신작을 찾아가는 트렌드 탐색가",
+    "생존 장르와 자유도 높은 샌드박스에 오래 머무는 탐험가",
+]
 
-app = FastAPI(title="Steam Insight EKS WAS", version="3.0.0-auto")
+FRIEND_POOL = [
+    {"name": "Anomaly", "code": "AN", "country": "Sweden", "game": "Counter-Strike 2", "trait": FRIEND_TRAITS[0]},
+    {"name": "shroud", "code": "SH", "country": "Canada", "game": "Escape from Tarkov", "trait": FRIEND_TRAITS[1]},
+    {"name": "S1mple", "code": "S1", "country": "Ukraine", "game": "Dota 2", "trait": FRIEND_TRAITS[2]},
+    {"name": "Ninja", "code": "NI", "country": "United States", "game": "Helldivers 2", "trait": FRIEND_TRAITS[3]},
+    {"name": "Pokelawls", "code": "PL", "country": "Canada", "game": "Rust", "trait": FRIEND_TRAITS[4]},
+    {"name": "Tarik", "code": "TK", "country": "United States", "game": "VALORANT", "trait": "팀 플레이와 사운드 플레이를 중시하는 전술가"},
+    {"name": "LIRIK", "code": "LK", "country": "United States", "game": "DayZ", "trait": "다양한 신작 인디 게임과 오픈월드 생존을 다각도로 탐험"},
+]
+
+# ---------------------------------------------------------------------------
+# 환경 설정
+# ---------------------------------------------------------------------------
+
+DB_REQUIRED_ENV_VARS = ("DB_HOST", "DB_USER", "DB_PASSWORD", "DB_NAME")
+
+REQUEST_COUNTER_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS request_counter (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        pod_name VARCHAR(255) NOT NULL,
+        requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+"""
+
+STEAM_API_BASE = "https://api.steampowered.com"
+STEAM_ID64_RE = re.compile(r"^\d{17}$")
+STEAM_ACCOUNT_ID_RE = re.compile(r"^\d{1,10}$")
+STEAM_ID64_BASE = 76561197960265728  # SteamID64 = 이 값 + AccountID32(게임 내 "친구 코드"로 표시되는 값)
+STEAM_ACCOUNT_ID_MAX = 2**32
+
+BEDROCK_DEFAULT_REGION = "us-east-1"
+BEDROCK_DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+# Steam GetPlayerSummaries의 personastate 코드 → 표시용 상태 문자열
+PERSONA_STATE_LABELS = {
+    0: "offline",
+    1: "online",
+    2: "busy",
+    3: "away",
+    4: "snooze",
+    5: "looking_to_trade",
+    6: "looking_to_play",
+}
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.on_event("startup")
-def startup_db_init():
-    if os.getenv("DB_HOST"):
-        try:
-            with closing(db_connection()) as connection:
-                init_db_tables(connection)
-                print("DB tables (steam_user_profiles, search_history) initialized.")
-        except Exception as e:
-            print(f"Startup DB init warning: {e}")
+def persona_state_label(summary: dict) -> str:
+    return PERSONA_STATE_LABELS.get(summary.get("personastate", 0), "offline")
 
 
 def required_env(name: str) -> str:
@@ -85,380 +98,532 @@ def required_env(name: str) -> str:
     return value
 
 
-def db_connection():
-    return pymysql.connect(
+# ---------------------------------------------------------------------------
+# DB 커넥션 풀 (지연 생성 — DB 환경 변수가 없어도 앱은 정상 기동해야 함)
+# ---------------------------------------------------------------------------
+
+
+async def create_db_pool() -> aiomysql.Pool:
+    return await aiomysql.create_pool(
         host=required_env("DB_HOST"),
         port=int(os.getenv("DB_PORT", "3306")),
         user=required_env("DB_USER"),
         password=required_env("DB_PASSWORD"),
-        database=required_env("DB_NAME"),
+        db=required_env("DB_NAME"),
         connect_timeout=5,
-        read_timeout=5,
-        write_timeout=5,
         autocommit=True,
-        cursorclass=pymysql.cursors.DictCursor,
+        cursorclass=aiomysql.cursors.DictCursor,
+        minsize=1,
+        maxsize=10,
     )
 
 
-import json
-import urllib.request
-import urllib.parse
-import hashlib
-import xml.etree.ElementTree as ET
+async def get_db_pool(app: FastAPI) -> aiomysql.Pool:
+    if app.state.db_pool is None:
+        async with app.state.db_pool_lock:
+            if app.state.db_pool is None:
+                app.state.db_pool = await create_db_pool()
+    return app.state.db_pool
 
-def fetch_steam_public_xml(user_input: str) -> dict | None:
-    clean_input = user_input.strip().rstrip('/')
-    if 'steamcommunity.com/id/' in clean_input:
-        clean_input = clean_input.split('steamcommunity.com/id/')[-1].split('/')[0]
-        url = f"https://steamcommunity.com/id/{urllib.parse.quote(clean_input)}/?xml=1"
-    elif 'steamcommunity.com/profiles/' in clean_input:
-        clean_input = clean_input.split('steamcommunity.com/profiles/')[-1].split('/')[0]
-        url = f"https://steamcommunity.com/profiles/{urllib.parse.quote(clean_input)}/?xml=1"
-    elif clean_input.isdigit() and len(clean_input) == 17:
-        url = f"https://steamcommunity.com/profiles/{clean_input}/?xml=1"
-    else:
-        url = f"https://steamcommunity.com/id/{urllib.parse.quote(clean_input)}/?xml=1"
 
+async def get_http_client(app: FastAPI) -> httpx.AsyncClient:
+    if app.state.http_client is None:
+        async with app.state.http_client_lock:
+            if app.state.http_client is None:
+                app.state.http_client = httpx.AsyncClient(timeout=10.0)
+    return app.state.http_client
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    app.state.db_pool = None
+    app.state.db_pool_lock = asyncio.Lock()
+    app.state.http_client = None
+    app.state.http_client_lock = asyncio.Lock()
+    yield
+    if app.state.db_pool is not None:
+        app.state.db_pool.close()
+        await app.state.db_pool.wait_closed()
+    if app.state.http_client is not None:
+        await app.state.http_client.aclose()
+
+
+app = FastAPI(title="Steam Insight EKS WAS", version="5.0.0-steam-bedrock", lifespan=lifespan)
+
+
+# ---------------------------------------------------------------------------
+# Steam Web API 클라이언트
+# ---------------------------------------------------------------------------
+
+
+class SteamUserNotFoundError(Exception):
+    pass
+
+
+async def resolve_steam_id(client: httpx.AsyncClient, api_key: str, identifier: str) -> str:
+    """SteamID64, AccountID(친구 코드), 커스텀 URL, 프로필 URL을 모두 받아 SteamID64로 정규화한다.
+
+    s.team 공유 단축 링크(`https://s.team/p/...`)는 로그인 세션이 있어야 최종
+    프로필로 리다이렉트되는 Steam 자체의 제약 때문에 API 키만으로는 여기서
+    풀 수 없다 — 그런 값은 뒤의 ResolveVanityURL 단계에서 "찾을 수 없음"으로
+    처리된다.
+    """
+    candidate = identifier.strip().rstrip("/").rsplit("/", 1)[-1]
+    if STEAM_ID64_RE.match(candidate):
+        return candidate
+
+    if STEAM_ACCOUNT_ID_RE.match(candidate) and int(candidate) < STEAM_ACCOUNT_ID_MAX:
+        # 게임 내에서 "친구 코드"/AccountID로 표시되는 9~10자리 숫자를 SteamID64로 변환해
+        # 실제 존재하는 계정인지 확인한다. 존재하지 않으면 바니티 URL 해석으로 넘어간다.
+        account_id_candidate = str(STEAM_ID64_BASE + int(candidate))
+        try:
+            await fetch_player_summary(client, api_key, account_id_candidate)
+            return account_id_candidate
+        except (SteamUserNotFoundError, httpx.HTTPError):
+            pass
+
+    response = await client.get(
+        f"{STEAM_API_BASE}/ISteamUser/ResolveVanityURL/v1/",
+        params={"key": api_key, "vanityurl": candidate},
+    )
+    response.raise_for_status()
+    payload = response.json().get("response", {})
+    if payload.get("success") != 1:
+        raise SteamUserNotFoundError(f"Steam 프로필을 찾을 수 없습니다: {identifier}")
+    return payload["steamid"]
+
+
+async def fetch_player_summary(client: httpx.AsyncClient, api_key: str, steamid: str) -> dict:
+    response = await client.get(
+        f"{STEAM_API_BASE}/ISteamUser/GetPlayerSummaries/v2/",
+        params={"key": api_key, "steamids": steamid},
+    )
+    response.raise_for_status()
+    players = response.json().get("response", {}).get("players", [])
+    if not players:
+        raise SteamUserNotFoundError(f"Steam 프로필 정보를 가져올 수 없습니다: {steamid}")
+    return players[0]
+
+
+async def fetch_owned_games(client: httpx.AsyncClient, api_key: str, steamid: str) -> list[dict]:
+    response = await client.get(
+        f"{STEAM_API_BASE}/IPlayerService/GetOwnedGames/v1/",
+        params={
+            "key": api_key,
+            "steamid": steamid,
+            "include_appinfo": 1,
+            "include_played_free_games": 1,
+        },
+    )
+    response.raise_for_status()
+    return response.json().get("response", {}).get("games", [])
+
+
+async def fetch_recently_played(client: httpx.AsyncClient, api_key: str, steamid: str) -> list[dict]:
+    response = await client.get(
+        f"{STEAM_API_BASE}/IPlayerService/GetRecentlyPlayedGames/v1/",
+        params={"key": api_key, "steamid": steamid},
+    )
+    response.raise_for_status()
+    return response.json().get("response", {}).get("games", [])
+
+
+async def fetch_friend_list(client: httpx.AsyncClient, api_key: str, steamid: str) -> list[dict]:
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as response:
-            xml_data = response.read()
-            root = ET.fromstring(xml_data)
+        response = await client.get(
+            f"{STEAM_API_BASE}/ISteamUser/GetFriendList/v1/",
+            params={"key": api_key, "steamid": steamid, "relationship": "friend"},
+        )
+        response.raise_for_status()
+        return response.json().get("friendslist", {}).get("friends", [])
+    except (httpx.HTTPError, ValueError):
+        # 친구 목록이 비공개인 프로필은 403을 반환한다. 타임아웃/연결 오류 등
+        # 다른 네트워크·파싱 실패도 friends_task가 analyze_user의 보호되지 않은
+        # 두 번째 asyncio.gather에서 그대로 전파돼 500을 유발하지 않도록 빈 목록으로 취급한다.
+        return []
 
-            error_el = root.find('error')
-            if error_el is not None and error_el.text:
-                if not url.startswith('https://steamcommunity.com/profiles/') and clean_input.isdigit():
-                    url_prof = f"https://steamcommunity.com/profiles/{clean_input}/?xml=1"
-                    req_p = urllib.request.Request(url_prof, headers=headers)
-                    with urllib.request.urlopen(req_p, timeout=5) as res_p:
-                        root = ET.fromstring(res_p.read())
-                        if root.find('error') is not None:
-                            return None
-                else:
-                    return None
 
-            steam_id64 = root.findtext('steamID64') or clean_input
-            personaname = root.findtext('steamID') or clean_input
-            avatar_full = root.findtext('avatarFull') or root.findtext('avatarMedium') or ""
+async def fetch_game_achievements(
+    client: httpx.AsyncClient, api_key: str, steamid: str, appid: int | None
+) -> dict | None:
+    """특정 게임의 업적 달성 개수(achieved/total)를 가져온다.
 
-            most_played = []
-            total_hours = 0
-            games_el = root.find('mostPlayedGames')
-            if games_el is not None:
-                for game in games_el.findall('mostPlayedGame'):
-                    g_name = game.findtext('gameName') or ""
-                    g_hours_str = game.findtext('hoursPlayed') or "0"
-                    try:
-                        g_hours = float(g_hours_str.replace(',', ''))
-                        total_hours += g_hours
-                    except ValueError:
-                        pass
-                    most_played.append({"name": g_name, "hours": g_hours_str})
+    업적이 없는 게임이거나, 업적 통계가 비공개인 계정이면 None을 반환한다.
+    (Steam Web API는 계정 전체를 아우르는 단일 업적 지표를 제공하지 않으므로,
+    표시 중인 게임별로만 개수를 조회한다.)
+    """
+    if not appid:
+        return None
+    try:
+        response = await client.get(
+            f"{STEAM_API_BASE}/ISteamUserStats/GetPlayerAchievements/v1/",
+            params={"key": api_key, "steamid": steamid, "appid": appid},
+        )
+        data = response.json().get("playerstats", {})
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not data.get("success"):
+        return None
+    achievements = data.get("achievements", [])
+    if not achievements:
+        return None
+    achieved = sum(1 for item in achievements if item.get("achieved"))
+    return {"achieved": achieved, "total": len(achievements)}
 
-            # 공개 프로필의 /games 및 /friends XML에서 실제 전체 보유 게임 수, 전체 플레이시간, 친구 수 추출
-            base_url = url.split('/?xml=1')[0]
-            real_games_count = 0
-            real_total_hours = 0.0
-            try:
-                games_xml_url = f"{base_url}/games/?xml=1"
-                req_g = urllib.request.Request(games_xml_url, headers=headers)
-                with urllib.request.urlopen(req_g, timeout=4) as res_g:
-                    g_root = ET.fromstring(res_g.read())
-                    g_list = g_root.find('games')
-                    if g_list is not None:
-                        game_nodes = g_list.findall('game')
-                        real_games_count = len(game_nodes)
-                        for g in game_nodes:
-                            hrs = g.findtext('hoursOnRecord')
-                            if hrs:
-                                try:
-                                    real_total_hours += float(hrs.replace(',', ''))
-                                except ValueError:
-                                    pass
-            except Exception as eg:
-                print(f"Games XML fetch warning: {eg}")
 
-            real_friends_count = 0
-            try:
-                friends_xml_url = f"{base_url}/friends/?xml=1"
-                req_f = urllib.request.Request(friends_xml_url, headers=headers)
-                with urllib.request.urlopen(req_f, timeout=4) as res_f:
-                    f_root = ET.fromstring(res_f.read())
-                    f_list = f_root.find('friends')
-                    if f_list is not None:
-                        real_friends_count = len(f_list.findall('friend'))
-            except Exception as ef:
-                print(f"Friends XML fetch warning: {ef}")
+def minutes_to_hours_label(minutes: float) -> str:
+    return f"{round(minutes / 60):,}h"
 
-            hours_display = round(real_total_hours) if real_total_hours > 0 else (round(total_hours) if total_hours > 0 else random.randint(250, 1800))
-            games_count_display = real_games_count if real_games_count > 0 else (len(most_played) * 8 if most_played else random.randint(40, 220))
-            friends_count_display = real_friends_count if real_friends_count > 0 else random.randint(20, 150)
 
-            return {
-                "steam_id": steam_id64,
-                "personaname": personaname,
-                "avatar_url": avatar_full,
-                "games_count": games_count_display,
-                "play_hours": hours_display,
-                "achievement_rate": random.randint(65, 92),
-                "friends_count": friends_count_display,
-                "source": "REAL_STEAM_PUBLIC"
+def build_game_entries(games: list[dict], limit: int = 5) -> list[dict]:
+    """플레이 시간 상위 게임을 이름/시간과 함께 Steam 스토어 이미지·링크까지 포함해 반환한다.
+
+    이미지/스토어 URL은 appid만 있으면 예측 가능한 Steam CDN/스토어 URL 패턴이라
+    별도 API 호출 없이 구성한다.
+    """
+    ranked = sorted(games, key=lambda g: g.get("playtime_forever", 0), reverse=True)
+    entries = []
+    for g in ranked[:limit]:
+        appid = g.get("appid")
+        entries.append(
+            {
+                "appid": appid,
+                "name": g.get("name", "Unknown"),
+                "hours": round(g.get("playtime_forever", 0) / 60, 1),
+                "image": f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg" if appid else None,
+                "storeUrl": f"https://store.steampowered.com/app/{appid}" if appid else None,
             }
-    except Exception as e:
-        print(f"Steam Public XML fetch error: {e}")
+        )
+    return entries
+
+
+# ---------------------------------------------------------------------------
+# AWS Bedrock (Bedrock API 키 기반 Bearer 인증) — 실 데이터 기반 인사이트 생성
+# ---------------------------------------------------------------------------
+
+
+async def call_bedrock(client: httpx.AsyncClient, api_key: str, region: str, model_id: str, prompt: str) -> str:
+    url = f"https://bedrock-runtime.{region}.amazonaws.com/model/{model_id}/invoke"
+    body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 400,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    response = await client.post(
+        url,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json=body,
+        timeout=20.0,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return payload["content"][0]["text"]
+
+
+def extract_json_object(text: str) -> dict:
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        raise ValueError("Bedrock 응답에서 JSON 객체를 찾을 수 없습니다.")
+    return json.loads(match.group(0))
+
+
+def normalize_bedrock_api_key(raw_key: str) -> str:
+    """AWS 콘솔에서 Bedrock API 키를 복사하면 'BedrockAPIKey-<id>,<실제 토큰>' 형태로
+    Key ID와 실제 토큰이 콤마로 함께 붙어오는 경우가 있다. 실제 인증에 쓰이는 값은
+    'ABSK'로 시작하는 뒷부분뿐이므로, 콤마가 있으면 'ABSK'로 시작하는 조각만 취한다.
+    """
+    raw_key = raw_key.strip()
+    if "," in raw_key:
+        for part in raw_key.split(","):
+            part = part.strip()
+            if part.startswith("ABSK"):
+                return part
+    return raw_key
+
+
+def bedrock_config() -> tuple[str, str, str] | None:
+    api_key = os.getenv("BEDROCK_API_KEY")
+    if not api_key:
+        return None
+    region = os.getenv("BEDROCK_REGION", BEDROCK_DEFAULT_REGION)
+    model_id = os.getenv("BEDROCK_MODEL_ID", BEDROCK_DEFAULT_MODEL_ID)
+    return normalize_bedrock_api_key(api_key), region, model_id
+
+
+async def generate_user_insight(
+    client: httpx.AsyncClient, display_name: str, top_games: list[dict]
+) -> tuple[str, str] | None:
+    config = bedrock_config()
+    if config is None or not top_games:
         return None
 
-def get_steam_api_data(user_input: str) -> dict | None:
-    if not STEAM_API_KEY:
-        return None
-
+    api_key, region, model_id = config
+    games_summary = ", ".join(f"{g['name']} {g['hours']}h" for g in top_games)
+    prompt = (
+        f"Steam 유저 '{display_name}'의 보유 게임별 누적 플레이 시간(높은 순): {games_summary}.\n"
+        "이 데이터만 근거로 플레이스타일을 분석해서 아래 JSON 형식으로만 답하라. "
+        "다른 설명, 인사말, 코드블록 표시는 절대 추가하지 마라.\n"
+        '{"playstyle": "8자 내외의 한글 플레이스타일 명칭", '
+        '"insight": "실제 게임 이름과 시간을 근거로 든 한글 2문장 이내 인사이트"}'
+    )
     try:
-        steam_id = user_input
-        if not (user_input.isdigit() and len(user_input) == 17):
-            url = f"https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/?key={STEAM_API_KEY}&vanityurl={urllib.parse.quote(user_input)}"
-            req = urllib.request.urlopen(url, timeout=4)
-            res = json.loads(req.read().decode('utf-8'))
-            if res.get("response", {}).get("success") == 1:
-                steam_id = res["response"]["steamid"]
-            else:
-                return None
-
-        summary_url = f"https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key={STEAM_API_KEY}&steamids={steam_id}"
-        req_sum = urllib.request.urlopen(summary_url, timeout=4)
-        res_sum = json.loads(req_sum.read().decode('utf-8'))
-        players = res_sum.get("response", {}).get("players", [])
-        if not players:
-            return None
-        player = players[0]
-
-        games_url = f"https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key={STEAM_API_KEY}&steamid={steam_id}&include_appinfo=1"
-        req_games = urllib.request.urlopen(games_url, timeout=4)
-        res_games = json.loads(req_games.read().decode('utf-8'))
-        games_resp = res_games.get("response", {})
-        game_count = games_resp.get("game_count", 0)
-        games_list = games_resp.get("games", [])
-        total_minutes = sum(g.get("playtime_forever", 0) for g in games_list)
-        play_hours = round(total_minutes / 60)
-
-        friends_count = -1  # -1 means private/unavailable
-        try:
-            friends_url = f"https://api.steampowered.com/ISteamUser/GetFriendList/v1/?key={STEAM_API_KEY}&steamid={steam_id}&relationship=friend"
-            req_friends = urllib.request.urlopen(friends_url, timeout=4)
-            res_friends = json.loads(req_friends.read().decode('utf-8'))
-            friends_list = res_friends.get("friendslist", {}).get("friends", [])
-            friends_count = len(friends_list)
-        except Exception:
-            friends_count = -1  # private or error
-
-        # 업적 달성률: 가장 많이 플레이한 상위 5개 게임 기준
-        achievement_rate = -1
-        try:
-            top_games = sorted(games_list, key=lambda g: g.get("playtime_forever", 0), reverse=True)[:5]
-            total_unlocked = 0
-            total_available = 0
-            for g in top_games:
-                appid = g.get("appid")
-                if not appid:
-                    continue
-                try:
-                    ach_url = f"https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?key={STEAM_API_KEY}&steamid={steam_id}&appid={appid}"
-                    req_ach = urllib.request.urlopen(ach_url, timeout=4)
-                    res_ach = json.loads(req_ach.read().decode('utf-8'))
-                    ach_list = res_ach.get("playerstats", {}).get("achievements", [])
-                    if ach_list:
-                        total_available += len(ach_list)
-                        total_unlocked += sum(1 for a in ach_list if a.get("achieved") == 1)
-                except Exception:
-                    continue  # 비공개 게임 등은 스킵
-            if total_available > 0:
-                achievement_rate = round(total_unlocked / total_available * 100)
-        except Exception as e:
-            print(f"Achievement rate calc error: {e}")
-
-        return {
-            "steam_id": steam_id,
-            "personaname": player.get("personaname", user_input),
-            "avatar_url": player.get("avatarfull", ""),
-            "games_count": game_count,
-            "play_hours": play_hours,
-            "achievement_rate": achievement_rate,
-            "friends_count": friends_count,
-            "source": "STEAM_API"
-        }
-    except Exception as e:
-        print(f"Steam API Call failed: {e}")
+        text = await call_bedrock(client, api_key, region, model_id, prompt)
+        data = extract_json_object(text)
+        playstyle = data.get("playstyle")
+        insight = data.get("insight")
+    except (httpx.HTTPError, ValueError, KeyError, json.JSONDecodeError):
         return None
 
-def generate_mock_user_data(username: str) -> dict:
-    hash_val = int(hashlib.md5(username.encode('utf-8')).hexdigest(), 16)
-    games_count = 100 + (hash_val % 400)
-    play_hours = 500 + (hash_val % 4500)
-    achievement_rate = 40 + (hash_val % 55)
-    friends_count = 20 + (hash_val % 280)
-    steam_id_mock = f"76561198{hash_val % 1000000000:09d}"
+    if not playstyle or not insight:
+        return None
+    return playstyle, insight
 
+
+async def generate_friend_trait(client: httpx.AsyncClient, friend_name: str, games_summary: str) -> str | None:
+    config = bedrock_config()
+    if config is None:
+        return None
+
+    api_key, region, model_id = config
+    prompt = (
+        f"Steam 친구 '{friend_name}'의 보유 게임별 누적 플레이 시간(높은 순): {games_summary or '데이터 없음'}.\n"
+        '다음 JSON 형식으로만 답하라. 다른 텍스트는 추가하지 마라: '
+        '{"trait": "이 친구의 플레이 성향을 나타내는 한글 한 문장"}'
+    )
+    try:
+        text = await call_bedrock(client, api_key, region, model_id, prompt)
+        return extract_json_object(text).get("trait")
+    except (httpx.HTTPError, ValueError, KeyError, json.JSONDecodeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# 라우트
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/api/info")
+async def info() -> dict[str, str]:
     return {
-        "steam_id": steam_id_mock,
-        "personaname": username,
-        "avatar_url": f"https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg",
-        "games_count": games_count,
-        "play_hours": play_hours,
-        "achievement_rate": achievement_rate,
-        "friends_count": friends_count,
-        "source": "MOCK"
+        "message": "WEB Pod에서 WAS Service로 정상 연결되었습니다.",
+        "was_pod": socket.gethostname(),
+        "version": "v5-eks-steam-bedrock",
     }
 
 
-PLAYSTYLES = [
-    "탐험형 협동 플레이어",
-    "경쟁형 FPS 마스터",
-    "몰입형 RPG 스토커",
-    "샌드박스 크래프터",
-    "하드코어 생존 전문가",
-    "전략 시뮬레이션 지휘관"
-]
+MOCK_REGIONS = ["KR", "US", "JP", "DE", "BR", "GB", "CA"]
 
-INSIGHTS = [
-    "전략·생존 장르를 중심으로 오래 플레이하며, 최근에는 친구와 즐기는 협동 게임 비중이 높아졌습니다.",
-    "경쟁 슈팅 게임에서 높은 K/D 지표를 기록하며 최신 FPS 메타를 빠르게 파악하는 스타일입니다.",
-    "스토리 중심 RPG 게임의 모든 수집 요소와 멀티 엔딩을 탐색하는 완벽주의 플레이어입니다.",
-    "자유도 높은 샌드박스와 건축·자동화 시스템 구축에 많은 플레이 타임을 투자하고 있습니다.",
-    "친구 네트워크와 함께 공포·협동 파티 게임을 주로 즐기며 주기적으로 신작을 탐색합니다."
-]
+
+def _mock_user_response(username: str) -> dict:
+    games_count = random.randint(150, 500)
+    play_hours = random.randint(1000, 5000)
+    achievement_count = random.randint(5, 80)
+    friends_count = random.randint(40, 300)
+
+    return {
+        "status": "ok",
+        "username": username,
+        "steam_id": None,
+        "avatar_url": "",
+        "profile_url": None,
+        "persona_state": random.choice(["online", "offline"]),
+        "data_source": "MOCK",
+        "was_pod": socket.gethostname(),
+        "metrics": {
+            "games": f"{games_count}",
+            "hours": f"{play_hours:,}h",
+            "achievements": f"{achievement_count}개",
+            "friends": f"{friends_count}명",
+            "region": random.choice(MOCK_REGIONS),
+        },
+        "playstyle": random.choice(PLAYSTYLES),
+        "insight": random.choice(INSIGHTS),
+        "message": f"WAS Pod ({socket.gethostname()})에서 유저 '{username}' 분석 데이터를 생성했습니다. (STEAM_API_KEY 미설정 — Mock 데이터)",
+    }
 
 
 @app.get("/api/user/{username}")
-def analyze_user(username: str) -> dict:
-    db_saved = False
-    db_source = "NONE"
-    
-    # 1. API Key가 있으면 Official Steam API 호출
-    user_data = get_steam_api_data(username)
+async def analyze_user(username: str, request: Request) -> dict:
+    steam_api_key = os.getenv("STEAM_API_KEY")
+    if not steam_api_key:
+        return _mock_user_response(username)
 
-    # 2. 없거나 실패시 Steam 커뮤니티 공개 XML 조회를 통해 실제 프로필 정보 추출
-    if not user_data:
-        user_data = fetch_steam_public_xml(username)
-
-    # 3. 모두 실패 시 모의 데이터 생성
-    if not user_data:
-        user_data = generate_mock_user_data(username)
-
-    selected_style = PLAYSTYLES[hash(username) % len(PLAYSTYLES)]
-    selected_insight = INSIGHTS[hash(username) % len(INSIGHTS)]
-
-    # DB 저장 및 이력 누적
+    client = await get_http_client(request.app)
     try:
-        if os.getenv("DB_HOST"):
-            with closing(db_connection()) as connection:
-                init_db_tables(connection)
-                with connection.cursor() as cursor:
-                    # 유저 프로필 저장/업데이트
-                    cursor.execute(
-                        """
-                        INSERT INTO steam_user_profiles
-                        (steam_id, username, personaname, avatar_url, games_count, play_hours, achievement_rate, friends_count, playstyle, insight, source)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON DUPLICATE KEY UPDATE
-                        personaname=VALUES(personaname), avatar_url=VALUES(avatar_url), games_count=VALUES(games_count),
-                        play_hours=VALUES(play_hours), achievement_rate=VALUES(achievement_rate), friends_count=VALUES(friends_count),
-                        playstyle=VALUES(playstyle), insight=VALUES(insight), source=VALUES(source)
-                        """,
-                        (
-                            user_data["steam_id"],
-                            username,
-                            user_data["personaname"],
-                            user_data["avatar_url"],
-                            user_data["games_count"],
-                            user_data["play_hours"],
-                            user_data["achievement_rate"],
-                            user_data["friends_count"],
-                            selected_style,
-                            selected_insight,
-                            user_data["source"]
-                        )
-                    )
-                    # 검색 이력 추가
-                    cursor.execute(
-                        "INSERT INTO search_history (search_query, steam_id) VALUES (%s, %s)",
-                        (username, user_data["steam_id"])
-                    )
-                db_saved = True
-                db_source = "MYSQL_DATABASE"
-    except Exception as exc:
-        print(f"DB Save Warning: {exc}")
-        db_saved = False
+        steamid = await resolve_steam_id(client, steam_api_key, username)
+        summary, games = await asyncio.gather(
+            fetch_player_summary(client, steam_api_key, steamid),
+            fetch_owned_games(client, steam_api_key, steamid),
+        )
+    except SteamUserNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Steam API 조회 실패: {exc}") from exc
+
+    display_name = summary.get("personaname", username)
+    # 프로필 카드에는 가장 많이 플레이한 5개 게임만 보여준다 (플레이 시간 + 게임별 업적).
+    display_games = build_game_entries(games, limit=5)
+    total_minutes = sum(g.get("playtime_forever", 0) for g in games)
+
+    friends_task = fetch_friend_list(client, steam_api_key, steamid)
+    achievements_task = asyncio.gather(
+        *(fetch_game_achievements(client, steam_api_key, steamid, g["appid"]) for g in display_games)
+    )
+    insight_task = generate_user_insight(client, display_name, display_games)
+
+    friends, per_game_achievements, insight_result = await asyncio.gather(
+        friends_task, achievements_task, insight_task
+    )
+
+    for game, achievements in zip(display_games, per_game_achievements):
+        game["achievements"] = achievements
+
+    # 계정 전체 업적 달성률을 제공하는 API가 없어, 화면에 보여주는 상위 5개 게임의
+    # 달성 개수를 그대로 합산해 표시한다 (근사치가 아니라 실제 개수).
+    achievement_total = sum(a["achieved"] for a in per_game_achievements if a is not None)
+
+    # 실 데이터 경로에서는 플레이스타일/인사이트를 Bedrock 생성 결과로만 채운다.
+    # BEDROCK_API_KEY 미설정이나 호출 실패 시 random 하드코딩 값으로 대체하지 않고
+    # null로 남겨, 프론트엔드가 "생성 실패/미설정" 상태를 있는 그대로 알 수 있게 한다.
+    playstyle, insight = insight_result if insight_result is not None else (None, None)
 
     return {
         "status": "ok",
-        "username": username,
-        "steam_id": user_data["steam_id"],
-        "personaname": user_data["personaname"],
-        "avatar_url": user_data["avatar_url"],
+        "username": display_name,
+        "steam_id": steamid,
+        "avatar_url": summary.get("avatarfull", ""),
+        "profile_url": summary.get("profileurl"),
+        "persona_state": persona_state_label(summary),
+        "data_source": "STEAM_API",
         "was_pod": socket.gethostname(),
         "metrics": {
-            "games": f"{user_data['games_count']}" if user_data['games_count'] >= 0 else "비공개",
-            "hours": f"{user_data['play_hours']:,}h" if user_data['play_hours'] >= 0 else "비공개",
-            "achievements": f"{user_data['achievement_rate']}%" if user_data['achievement_rate'] >= 0 else "비공개",
-            "friends": f"{user_data['friends_count']}명" if user_data['friends_count'] >= 0 else "비공개"
+            "games": f"{len(games)}",
+            "hours": minutes_to_hours_label(total_minutes),
+            "achievements": f"{achievement_total}개",
+            "friends": f"{len(friends)}명",
+            "region": summary.get("loccountrycode") or "-",
         },
-        "playstyle": selected_style,
-        "insight": selected_insight,
-        "db_saved": db_saved,
-        "db_source": db_source,
-        "data_source": user_data["source"],
-        "message": f"WAS Pod ({socket.gethostname()})에서 유저 '{username}' 분석 데이터를 생성 및 DB 저장했습니다."
+        "playstyle": playstyle,
+        "insight": insight,
+        "top_games": display_games,
+        "message": f"WAS Pod ({socket.gethostname()})에서 유저 '{display_name}' 분석 데이터를 생성했습니다.",
     }
 
 
-
-@app.get("/api/friends/{username}")
-def get_user_friends(username: str) -> dict:
-    friend_pool = [
-        {"name": "Anomaly", "code": "AN", "country": "Sweden", "game": "Counter-Strike 2", "trait": "경쟁 FPS와 협동 공포를 오가는 하이브리드 플레이어"},
-        {"name": "shroud", "code": "SH", "country": "Canada", "game": "Escape from Tarkov", "trait": "새로운 슈팅 게임의 메타를 빠르게 탐색하는 정밀 플레이어"},
-        {"name": "S1mple", "code": "S1", "country": "Ukraine", "game": "Dota 2", "trait": "경쟁 게임과 장기 몰입형 RPG를 함께 즐기는 집중형 플레이어"},
-        {"name": "Ninja", "code": "NI", "country": "United States", "game": "Helldivers 2", "trait": "커뮤니티와 함께 신작을 찾아가는 트렌드 탐색가"},
-        {"name": "Pokelawls", "code": "PL", "country": "Canada", "game": "Rust", "trait": "생존 장르와 자유도 높은 샌드박스에 오래 머무는 탐험가"},
-        {"name": "Tarik", "code": "TK", "country": "United States", "game": "VALORANT", "trait": "팀 플레이와 사운드 플레이를 중시하는 전술가"},
-        {"name": "LIRIK", "code": "LK", "country": "United States", "game": "DayZ", "trait": "다양한 신작 인디 게임과 오픈월드 생존을 다각도로 탐험"}
-    ]
-    sampled = random.sample(friend_pool, 5)
-    for f in sampled:
-        f["twoWeeks"] = f"{random.randint(10, 60)}.{random.randint(0, 9)}h"
-        f["total"] = f"{random.randint(1000, 8000):,}h"
-        f["shared"] = f"{random.randint(5, 30)}개"
+def _mock_friends_response(username: str) -> dict:
+    sampled = [dict(friend) for friend in random.sample(FRIEND_POOL, 5)]
+    for friend in sampled:
+        friend["twoWeeks"] = f"{random.randint(10, 60)}.{random.randint(0, 9)}h"
+        friend["total"] = f"{random.randint(1000, 8000):,}h"
+        friend["shared"] = f"{random.randint(5, 30)}개"
+        friend["profile_url"] = None
+        friend["persona_state"] = random.choice(["online", "offline"])
 
     return {
         "status": "ok",
         "username": username,
         "was_pod": socket.gethostname(),
-        "friends": sampled
+        "friends": sampled,
+    }
+
+
+async def build_real_friend_entry(
+    client: httpx.AsyncClient, api_key: str, steamid: str, my_game_appids: set[int]
+) -> dict | None:
+    try:
+        summary, games, recent = await asyncio.gather(
+            fetch_player_summary(client, api_key, steamid),
+            fetch_owned_games(client, api_key, steamid),
+            fetch_recently_played(client, api_key, steamid),
+        )
+    except (httpx.HTTPError, SteamUserNotFoundError):
+        return None
+
+    total_minutes = sum(g.get("playtime_forever", 0) for g in games)
+    two_weeks_minutes = sum(g.get("playtime_2weeks", 0) for g in recent)
+    shared_count = len(my_game_appids & {g.get("appid") for g in games})
+    top_games = build_game_entries(games)
+    display_name = summary.get("personaname", "Unknown")
+
+    return {
+        "name": display_name,
+        "code": display_name[:2].upper(),
+        "country": summary.get("loccountrycode", "—"),
+        "profile_url": summary.get("profileurl"),
+        "persona_state": persona_state_label(summary),
+        "game": top_games[0]["name"] if top_games else "—",
+        "twoWeeks": f"{two_weeks_minutes / 60:.1f}h",
+        "total": minutes_to_hours_label(total_minutes),
+        "shared": f"{shared_count}개",
+        "_top_games": top_games,
+    }
+
+
+@app.get("/api/friends/{username}")
+async def get_user_friends(username: str, request: Request) -> dict:
+    steam_api_key = os.getenv("STEAM_API_KEY")
+    if not steam_api_key:
+        return _mock_friends_response(username)
+
+    client = await get_http_client(request.app)
+    try:
+        steamid = await resolve_steam_id(client, steam_api_key, username)
+        my_games, friend_refs = await asyncio.gather(
+            fetch_owned_games(client, steam_api_key, steamid),
+            fetch_friend_list(client, steam_api_key, steamid),
+        )
+    except SteamUserNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Steam API 조회 실패: {exc}") from exc
+
+    my_game_appids = {g.get("appid") for g in my_games}
+    sampled_refs = friend_refs[:5]
+
+    entries = await asyncio.gather(
+        *(
+            build_real_friend_entry(client, steam_api_key, ref["steamid"], my_game_appids)
+            for ref in sampled_refs
+        )
+    )
+    friends = [entry for entry in entries if entry is not None]
+
+    async def with_trait(friend: dict) -> dict:
+        # trait도 Bedrock 생성 결과로만 채운다 — 실패/미설정 시 random 하드코딩
+        # 문구 대신 null로 남긴다 (analyze_user의 playstyle/insight와 동일한 원칙).
+        games_summary = ", ".join(f"{g['name']} {g['hours']}h" for g in friend.pop("_top_games"))
+        friend["trait"] = await generate_friend_trait(client, friend["name"], games_summary)
+        return friend
+
+    friends = await asyncio.gather(*(with_trait(friend) for friend in friends))
+
+    return {
+        "status": "ok",
+        "username": username,
+        "was_pod": socket.gethostname(),
+        "friends": friends,
     }
 
 
 @app.get("/api/db")
-def db_test() -> dict:
+async def db_test(request: Request) -> dict:
     try:
-        with closing(db_connection()) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS request_counter (
-                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                        pod_name VARCHAR(255) NOT NULL,
-                        requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                    """
-                )
-                cursor.execute(
-                    "INSERT INTO request_counter (pod_name) VALUES (%s)",
-                    (socket.gethostname(),),
-                )
-                cursor.execute(
-                    "SELECT COUNT(*) AS total_requests, NOW() AS database_time FROM request_counter"
-                )
-                result = cursor.fetchone()
+        pool = await get_db_pool(request.app)
+        async with pool.acquire() as connection, connection.cursor() as cursor:
+            await cursor.execute(REQUEST_COUNTER_TABLE_SQL)
+            await cursor.execute(
+                "INSERT INTO request_counter (pod_name) VALUES (%s)",
+                (socket.gethostname(),),
+            )
+            await cursor.execute(
+                "SELECT COUNT(*) AS total_requests, NOW() AS database_time FROM request_counter"
+            )
+            result = await cursor.fetchone()
 
         return {
             "message": "WAS Pod에서 RDS MySQL로 정상 연결되었습니다.",
@@ -467,4 +632,3 @@ def db_test() -> dict:
         }
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"RDS connection failed: {exc}") from exc
-  
