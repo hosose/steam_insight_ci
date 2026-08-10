@@ -632,4 +632,4 @@ async def db_test(request: Request) -> dict:
         }
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"RDS connection failed: {exc}") from exc
- 
+  
