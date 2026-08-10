@@ -17,6 +17,12 @@ from steam_api import (
 
 CHART_COLLECT_INTERVAL_SECONDS = 15 * 60
 
+# 장르(태그)당 최소 게임 수 보장 - 부족하면 "빈 장르 채우기" 부트스트랩 모드로 전환된다.
+MIN_GAMES_PER_GENRE = 10
+GENRE_SEARCH_COUNT = 15  # 장르당 최소 10개 목표치보다 여유를 둠 (일부는 appdetails 실패 가능)
+GENRES_PER_CYCLE_STEADY = 15  # 평상시(모든 장르가 이미 채워진 뒤): 커서 순회 페이스
+GENRES_PER_CYCLE_BOOTSTRAP = 40  # 콜드스타트: 안 채워진 장르를 몰아서 처리
+
 
 def save_chart_rankings(connection, ranks: list[dict], snapshot_time: datetime) -> None:
     with connection.cursor() as cursor:
@@ -37,6 +43,21 @@ def game_info_exists(connection, appid: int) -> bool:
     with connection.cursor() as cursor:
         cursor.execute("SELECT appid FROM game_info WHERE appid = %s", (appid,))
         return cursor.fetchone() is not None
+
+
+def get_underfilled_genre_names(connection, min_games: int) -> set[str]:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT g.name AS genre_name, COUNT(gg.appid) AS game_count
+            FROM genres g
+            LEFT JOIN game_genres gg ON gg.genre_name = g.name
+            GROUP BY g.name
+            HAVING game_count < %s
+            """,
+            (min_games,),
+        )
+        return {row["genre_name"] for row in cursor.fetchall()}
 
 
 def get_collector_state(connection, key: str) -> int:
@@ -123,6 +144,17 @@ def collect_game_charts() -> None:
     except Exception as e:
         print(f"Popular tags fetch warning: {e}")
 
+    # 콜드스타트 부트스트랩: 아직 최소 표본(장르당 MIN_GAMES_PER_GENRE개)을 못 채운 장르가
+    # 있으면, 평소처럼 커서 순서대로 15개씩 도는 대신 안 채워진 장르를 우선 몰아서 처리한다.
+    # 다 채워지고 나면(운영 중 평상시) 다시 커서 기반 순회로 돌아가 최신성만 유지한다.
+    underfilled_genre_names = set()
+    if popular_tags:
+        try:
+            with closing(db_connection()) as connection:
+                underfilled_genre_names = get_underfilled_genre_names(connection, MIN_GAMES_PER_GENRE)
+        except Exception as e:
+            print(f"Underfilled genre check warning: {e}")
+
     # 동시접속자 차트 외에 특가/베스트셀러/신작/일반 검색/장르별 검색에서도 appid를 더 모아서
     # game_info에 더 다양한(장르 편중 적은) 게임 데이터를 쌓는다.
     # 일반 검색은 매번 같은 페이지만 보면 몇 주기 만에 다 소진되어 게임 수가 정체되므로,
@@ -143,23 +175,28 @@ def collect_game_charts() -> None:
     # 결과가 빈 페이지면 카탈로그 끝에 도달한 것으로 보고 처음부터 다시 훑는다.
     next_search_offset = (search_offset + 100) if search_result_appids else 0
 
-    # 장르(태그)마다 최소 표본을 보장하기 위해, 매 주기 일부 장르씩 순회하며
-    # 해당 태그로 필터링된 검색 결과를 추가로 모은다 (전체 태그를 한 번에 돌면 15분을 넘김).
-    GENRES_PER_CYCLE = 15
-    GENRE_SEARCH_COUNT = 15  # "장르당 최소 10개는 보이게" 목표치보다 여유를 둠 (일부는 appdetails 실패 가능)
-    genre_batch = popular_tags[genre_cursor:genre_cursor + GENRES_PER_CYCLE] if popular_tags else []
-    if not genre_batch and popular_tags:
-        genre_cursor = 0
-        genre_batch = popular_tags[0:GENRES_PER_CYCLE]
-    next_genre_cursor = genre_cursor + len(genre_batch)
-    if next_genre_cursor >= len(popular_tags):
-        next_genre_cursor = 0
+    # 장르(태그)마다 최소 표본을 보장하기 위해 태그로 필터링된 검색 결과를 추가로 모은다.
+    # 안 채워진 장르가 있으면 그것부터 몰아서 처리(부트스트랩)하고, 커서는 건드리지 않는다 —
+    # 그래야 다 채워진 뒤 평상시 순회가 원래 자리에서 이어진다.
+    is_bootstrapping = bool(underfilled_genre_names)
+    if is_bootstrapping:
+        genre_batch = [t for t in popular_tags if t["name"] in underfilled_genre_names][:GENRES_PER_CYCLE_BOOTSTRAP]
+        next_genre_cursor = genre_cursor
+    else:
+        genre_batch = popular_tags[genre_cursor:genre_cursor + GENRES_PER_CYCLE_STEADY] if popular_tags else []
+        if not genre_batch and popular_tags:
+            genre_cursor = 0
+            genre_batch = popular_tags[0:GENRES_PER_CYCLE_STEADY]
+        next_genre_cursor = genre_cursor + len(genre_batch)
+        if next_genre_cursor >= len(popular_tags):
+            next_genre_cursor = 0
 
     for tag in genre_batch:
         try:
             discovery_appids |= fetch_appids_by_tag(tag["tagid"], count=GENRE_SEARCH_COUNT)
         except Exception as e:
             print(f"Tag search warning ({tag['name']}): {e}")
+        time.sleep(0.5)  # 장르 검색 요청 과다 방지 (부트스트랩 때는 40개까지 연속 호출됨)
 
     try:
         with closing(db_connection()) as connection:
@@ -210,7 +247,9 @@ def collect_game_charts() -> None:
             f"Chart snapshot saved: {len(ranks)} chart games, "
             f"{len(candidate_appids)} candidates checked, {new_appid_count} new game_info rows, "
             f"search_offset {search_offset} -> {next_search_offset}, "
-            f"genres scanned this cycle: {[t['name'] for t in genre_batch]} "
+            f"{'BOOTSTRAP' if is_bootstrapping else 'steady'} genres scanned this cycle "
+            f"({len(underfilled_genre_names)} still underfilled before this run): "
+            f"{[t['name'] for t in genre_batch]} "
             f"(cursor {genre_cursor} -> {next_genre_cursor} of {len(popular_tags)})"
         )
     except Exception as e:
